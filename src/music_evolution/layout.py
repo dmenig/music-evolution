@@ -34,12 +34,12 @@ def _build_cdf(nodes: list[dict]) -> tuple[list[tuple[int, float, float]], float
     Returns list of (year, cum_start, cum_end) bins and total cumulative."""
     counts: dict[int, int] = defaultdict(int)
     for n in nodes:
-        b = (n["birth_year"] // BIN_YEARS) * BIN_YEARS
+        b = (n["peak_year"] // BIN_YEARS) * BIN_YEARS
         counts[b] += 1
     if not nodes:
         return [], 1.0
-    lo = (min(n["birth_year"] for n in nodes) // BIN_YEARS) * BIN_YEARS
-    hi = (max(n["birth_year"] for n in nodes) // BIN_YEARS + 1) * BIN_YEARS
+    lo = (min(n["peak_year"] for n in nodes) // BIN_YEARS) * BIN_YEARS
+    hi = (max(n["peak_year"] for n in nodes) // BIN_YEARS + 1) * BIN_YEARS
     bins: list[tuple[int, float, float]] = []
     cum = 0.0
     y = lo
@@ -71,7 +71,7 @@ def _x_jitter(nodes: list[dict]) -> dict[str, float]:
     """Spread same-year ties; ±20y pre-1900, ±5 to 1950, ±0.5 modern."""
     groups: dict[int, list[dict]] = defaultdict(list)
     for n in nodes:
-        groups[n["birth_year"]].append(n)
+        groups[n["peak_year"]].append(n)
     jit: dict[str, float] = {}
     for year, group in groups.items():
         group.sort(key=lambda x: x["id"])
@@ -84,17 +84,17 @@ def _x_jitter(nodes: list[dict]) -> dict[str, float]:
 
 
 def _x_world(node: dict, jit: dict[str, float], bins, total: float) -> float:
-    year = node["birth_year"] + jit.get(node["id"], 0.0)
+    year = node["peak_year"] + jit.get(node["id"], 0.0)
     return CANVAS_W * _cdf_at(year, bins, total)
 
 
 def _initial_y_targets(nodes: list[dict]) -> dict[str, float]:
     """Distribute ranks evenly within each X column so we don't start clumped."""
     by_id = {n["id"]: n for n in nodes}
-    ranked = sorted(nodes, key=lambda n: (n["birth_year"], n.get("y", 0.5)))
+    ranked = sorted(nodes, key=lambda n: (n["peak_year"], n.get("y", 0.5)))
     cols: dict[int, list[str]] = defaultdict(list)
     for n in ranked:
-        col = n["birth_year"] // 10
+        col = n["peak_year"] // 10
         cols[col].append(n["id"])
     target: dict[str, float] = {}
     for col, ids in cols.items():

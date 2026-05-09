@@ -381,54 +381,57 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
   }
 
   const PACK_PAD = 1.0;
+  // Free-X timeline: every node sits at its actual x_norm position (the
+  // density-CDF mapping of birth_year). Y is relaxed by a force simulation
+  // pulling toward canvas center, with collision avoidance keeping bubbles
+  // from overlapping. Earlier column-pack bucketed nodes into N regular
+  // columns and snapped X to column-center, which made the layout look
+  // gridded and divorced from the actual time axis.
   function relaxY() {
     const N = nodes.length;
     const availW = W - margin.left - margin.right;
     const availH = H - margin.top - margin.bottom - 30;
+    const centerY = margin.top + availH / 2;
+
     const ws = new Float64Array(N);
-    let maxW_ = 0;
-    for (let i = 0; i < N; i++) { ws[i] = weight(nodes[i]); if (ws[i] > maxW_) maxW_ = ws[i]; }
-
-    let best = { factor: 0 };
-    for (let nc = 8; nc <= 300; nc++) {
-      const sums = new Float64Array(nc);
-      const cnts = new Int32Array(nc);
-      for (let i = 0; i < N; i++) {
-        const ci = Math.max(0, Math.min(nc - 1, Math.floor((nodes[i].x_norm || 0) * nc)));
-        sums[ci] += ws[i]; cnts[ci]++;
-      }
-      let mS = 0, mC = 0;
-      for (let c = 0; c < nc; c++) { if (sums[c] > mS) mS = sums[c]; if (cnts[c] > mC) mC = cnts[c]; }
-      const cellW = availW / nc;
-      const aX = (cellW - PACK_PAD) / (2 * maxW_);
-      const aY = (availH - PACK_PAD * Math.max(0, mC - 1)) / Math.max(1, 2 * mS);
-      const a = Math.min(aX, aY);
-      if (a > best.factor) best = { numCols: nc, factor: a };
-    }
-
-    const { numCols, factor } = best;
-    const cellW = availW / numCols;
-    const buckets = Array.from({ length: numCols }, () => []);
+    let sumSqW = 0;
+    let maxW = 0;
     for (let i = 0; i < N; i++) {
-      const ci = Math.max(0, Math.min(numCols - 1, Math.floor((nodes[i].x_norm || 0) * numCols)));
-      buckets[ci].push(i);
+      ws[i] = weight(nodes[i]);
+      sumSqW += ws[i] * ws[i];
+      if (ws[i] > maxW) maxW = ws[i];
     }
-    for (let c = 0; c < numCols; c++) {
-      const ids = buckets[c];
-      if (!ids.length) continue;
-      ids.sort((a, b) => (nodes[a].y_norm || 0.5) - (nodes[b].y_norm || 0.5));
-      const colX = margin.left + (c + 0.5) * cellW;
-      let stackH = -PACK_PAD;
-      for (const id of ids) stackH += 2 * factor * ws[id] + PACK_PAD;
-      let yCursor = margin.top + (availH - stackH) / 2;
-      for (const id of ids) {
-        const r = factor * ws[id];
-        yCursor += r;
-        nodes[id]._tx = colX;
-        nodes[id]._y = yCursor;
-        nodes[id]._r = r;
-        yCursor += r + PACK_PAD;
-      }
+
+    // Pick radius factor so total bubble area ≈ 30% of viewport area; this
+    // leaves enough whitespace for collision relaxation to converge cleanly.
+    const FILL = 0.30;
+    let factor = Math.sqrt((availW * availH * FILL) / (Math.PI * Math.max(1e-9, sumSqW)));
+    // Cap so a single mega-bubble can't take more than 1/3 of the canvas height.
+    factor = Math.min(factor, availH / (3 * Math.max(1e-9, maxW)));
+
+    for (let i = 0; i < N; i++) {
+      const d = nodes[i];
+      d._r = factor * ws[i];
+      d.x = margin.left + availW * (d.x_norm || 0);
+      // Stagger initial Y by lineage so the simulation has somewhere to relax to.
+      d.y = centerY + (((d.y_norm || 0.5) - 0.5) * availH * 0.6);
+    }
+
+    const targetX = (d) => margin.left + availW * (d.x_norm || 0);
+    const sim = d3.forceSimulation(nodes)
+      .alpha(1)
+      .alphaDecay(0.04)
+      .velocityDecay(0.4)
+      .force('x', d3.forceX(targetX).strength(1))
+      .force('y', d3.forceY(centerY).strength(0.05))
+      .force('collide', d3.forceCollide(d => d._r + PACK_PAD).strength(1).iterations(2))
+      .stop();
+
+    for (let i = 0; i < 240; i++) sim.tick();
+
+    for (const d of nodes) {
+      d._tx = d.x;
+      d._y = d.y;
     }
   }
 
