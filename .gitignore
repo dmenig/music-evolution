@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.claude/
+.streamlit/secrets.toml
+logs/
+data/
+genres.json
+plan.md
+.DS_Store
