@@ -12,6 +12,7 @@
     --fg: #e8eaf0;
     --muted: #8a91a3;
     --accent: #f6c66c;
+    --accent-2: #6cc4f6;
     --border: #262a36;
   }
   * { box-sizing: border-box; }
@@ -27,8 +28,12 @@
   header input[type="search"], header select, header button {
     background: var(--panel-2); color: var(--fg); border: 1px solid var(--border);
     padding: 5px 10px; border-radius: 6px; font: inherit; }
+  header input[type="search"] { width: 230px; }
   header button { cursor: pointer; }
   header button:hover { border-color: var(--accent); }
+  header button.primary { background: var(--accent); color: #1a1305 !important; border-color: var(--accent); font-weight: 600; }
+  header .pill { padding: 3px 10px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+  header .pill.active { color: var(--accent); border-color: var(--accent); }
   header .hint { font-size: 11px; color: var(--muted); }
   main { position: relative; overflow: hidden; }
   svg { width: 100%; height: 100%; cursor: grab; display: block; }
@@ -38,14 +43,23 @@
   .gridline { stroke: #1c1f28; }
   .edge { fill: none; stroke-linecap: round; pointer-events: none; opacity: 0.35; }
   .node circle { stroke: rgba(255,255,255,0.18); stroke-width: 0.6; }
-  .node.dead circle { stroke-dasharray: 2 2; }
-  /* Highlight via parent-class so hover is O(lit-set), not O(all-nodes). */
-  .nodes.dimmed g.node { opacity: 0.06; }
-  .nodes.dimmed g.node.lit { opacity: 1; }
-  .edges.dimmed path.edge { opacity: 0.04; }
-  .edges.dimmed path.edge.lit { opacity: 0.85; }
-  .node.lit circle { stroke: rgba(255,255,255,0.9); stroke-width: 1.5; }
-  .node text { fill: #f5f7ff; font-size: 11px; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,0.9); }
+  .node.dead circle { stroke-dasharray: 2 2; filter: saturate(0.45) brightness(0.72); }
+  .nodes.traced g.node { opacity: 0.08; }
+  .nodes.traced g.node.lit { opacity: 1; }
+  .edges.traced path.edge { opacity: 0.04; }
+  .edges.traced path.edge.lit { opacity: 0.85; }
+  .node.lit circle { stroke: rgba(255,255,255,0.92); stroke-width: 1.4; }
+  .node.intersected circle { stroke: var(--accent-2); stroke-width: 2.2; }
+  .node.selected circle { stroke: var(--accent); stroke-width: 2.6; }
+  .node.hovered circle { stroke: rgba(255,255,255,0.95); stroke-width: 1.4; }
+  .node text { fill: #f5f7ff; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,0.95); }
+  .tooltip { position: absolute; pointer-events: none; background: rgba(22,24,31,0.95);
+    border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; font-size: 12px;
+    max-width: 280px; line-height: 1.35; z-index: 6; opacity: 0; transition: opacity .12s; }
+  .tooltip.show { opacity: 1; }
+  .tooltip .name { font-weight: 600; color: var(--accent); margin-bottom: 2px; }
+  .tooltip .era { color: var(--muted); font-size: 11px; }
+  .tooltip .desc { color: var(--fg); margin-top: 4px; font-size: 11px; }
   aside.panel { position: absolute; top: 0; right: 0; bottom: 0; width: 380px;
     background: var(--panel); border-left: 1px solid var(--border); padding: 16px 18px;
     overflow-y: auto; transform: translateX(100%); transition: transform .18s ease; z-index: 5; }
@@ -67,7 +81,7 @@
   aside.panel .ext { font-size: 11px; color: var(--muted); text-decoration: none; margin-left: 4px; }
   aside.panel .ext:hover { color: var(--accent); }
   aside.panel .close { float: right; cursor: pointer; color: var(--muted); border: 0; background: transparent; font-size: 18px; }
-  .legend { position: absolute; left: 12px; bottom: 12px; font-size: 11px; color: var(--muted);
+  .legend { position: absolute; left: 12px; bottom: 38px; font-size: 11px; color: var(--muted);
     background: rgba(22,24,31,0.8); padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); }
 </style>
 </head>
@@ -76,18 +90,26 @@
   <header>
     <h1>♪ Music Evolution</h1>
     <div class="group">
-      <input id="search" type="search" placeholder="Search genre, alias, artist…" autocomplete="off" />
+      <input id="search" type="search" placeholder="Search genre, alias, artist… (Enter)" autocomplete="off" />
     </div>
     <div class="group">
-      <span class="hint">Click bubble for details</span>
+      <span class="pill" id="selPill">click a genre to trace its lineage</span>
+    </div>
+    <div class="group">
+      <button id="btnClear">Clear (Esc)</button>
+    </div>
+    <div class="group">
+      <span class="hint">Click = trace · Shift+click = add · Esc / empty = clear</span>
     </div>
   </header>
   <main>
     <svg id="canvas"></svg>
+    <div id="tooltip" class="tooltip"></div>
     <div class="legend">
-      <div><b>Bubble size</b> ∝ all-time popularity (1–10)</div>
+      <div><b>Bubble size</b> ∝ (popularity² × √fanout / era-mass)^0.4</div>
       <div><b>Color</b> inherits from parents (fusions blend)</div>
-      <div><b>Dashed ring</b> = no longer a living tradition</div>
+      <div><b>Desaturated + dashed</b> = no longer a living tradition</div>
+      <div><b>Blue ring</b> in multi-select = descendant of every selection</div>
     </div>
     <aside class="panel" id="panel">
       <button class="close" id="panelClose" aria-label="close">×</button>
@@ -119,13 +141,10 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
   const yearMax = 2026;
 
   const svg = d3.select('#canvas');
+  const tooltipEl = document.getElementById('tooltip');
   let W = 0, H = 0;
   const margin = { top: 28, right: 24, bottom: 28, left: 36 };
 
-  // Logarithmic stretch on the pre-1900 region so early genres have room.
-  // Spread nodes that share a birth_year into a ±span years jitter so we don't
-  // get vertical pile-ups at round-century estimates (1000, 1500, 1700…).
-  // Group ties; assign each tied node a deterministic offset within the group.
   const xJitter = new Map();
   (function buildJitter() {
     const groups = new Map();
@@ -136,7 +155,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     }
     for (const [year, group] of groups) {
       group.sort((a, b) => a.id.localeCompare(b.id));
-      // pre-1900: spread across ±20 years; post-1950: ±0.5; in-between: ±5
       const span = year < 1900 ? 20 : (year < 1950 ? 5 : 0.5);
       const n = group.length;
       group.forEach((node, i) => {
@@ -146,12 +164,8 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     }
   })();
 
-  function rawYear(n) {
-    return (n.birth_year || yearMin) + (xJitter.get(n.id) || 0);
-  }
+  function rawYear(n) { return (n.birth_year || yearMin) + (xJitter.get(n.id) || 0); }
 
-  // Density-driven X scale. Build a piecewise-linear CDF of (1 + sqrt(count_in_bin))
-  // so years with many genres get more screen width than empty centuries.
   const BIN = 5;
   const cdfPoints = (function buildCdf() {
     const lo = Math.floor(yearMin / BIN) * BIN;
@@ -161,14 +175,13 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       const b = Math.floor(n.birth_year / BIN) * BIN;
       counts.set(b, (counts.get(b) || 0) + 1);
     }
-    const points = []; // [{year, cum}]
+    const points = [];
     let cum = 0;
     for (let y = lo; y <= hi; y += BIN) {
       const c = counts.get(y) || 0;
-      // Dense bins dominate; empty bins get a tiny floor so they don't fully vanish.
-      const weight = c > 0 ? (1 + Math.pow(c, 0.7)) : 0.01;
+      const w = c > 0 ? (1 + Math.pow(c, 0.7)) : 0.01;
       points.push({ year: y, cumStart: cum });
-      cum += weight;
+      cum += w;
       points.push({ year: y + BIN, cumEnd: cum });
     }
     return { points, total: cum, lo, hi };
@@ -178,7 +191,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     const { points, total, lo, hi } = cdfPoints;
     if (year <= lo) return 0;
     if (year >= hi) return 1;
-    // points come in pairs: (cumStart at y), (cumEnd at y+BIN)
     for (let i = 0; i < points.length; i += 2) {
       const a = points[i], b = points[i + 1];
       if (year >= a.year && year <= b.year) {
@@ -193,26 +205,66 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     const w = W - margin.left - margin.right;
     return margin.left + w * cdfAt(Math.max(yearMin, Math.min(yearMax, year)));
   }
-  function xOf(n) { return xScale(rawYear(n)); }
 
-  // Virtual Y space: scaled per node count so bubbles don't overlap.
-  let virtualH = 1000;
-  function yScale(yNorm) {
-    return margin.top + (virtualH - margin.top - margin.bottom) * yNorm;
+  // Raw weight: popularity² × √(1+children). Popularity dominates; fanout is
+  // a mild structural boost.
+  function rawWeight(d) {
+    const c = (d.children && d.children.length) || 0;
+    const p = d.popularity || 0.0001;
+    return p * p * Math.sqrt(1 + c);
   }
 
-  // Cubic in popularity, no floor. Rock (pop=10) is 1000× the weight of pop=1,
-  // so most niche bubbles vanish at fit zoom — that's the landscape feel.
-  // The actual radius is _r, set by relaxY: factor·weight chosen so the layout
-  // exactly fills the viewport (fit-all gives k≈1).
-  function weight(d) { return Math.pow(d.popularity || 1, 3); }
+  // Per-era normalization. Without this, dense eras (1970s–2010s) crowd a few
+  // columns with mega-weights, the packer's height constraint binds on those
+  // columns alone, every bubble shrinks globally to fit, and sparse eras are
+  // left empty. Dividing each node's weight by bucket_sum^α (with α=0.5)
+  // brings each era's total mass to √(original) — ratios within an era are
+  // preserved, but cross-era variance collapses, so the whole canvas fills.
+  const ERA_BUCKETS = 20;
+  const ERA_ALPHA = 0.5;
+  const eraNorm = new Float64Array(ERA_BUCKETS);
+  (function computeEraNorm() {
+    const sums = new Float64Array(ERA_BUCKETS);
+    for (const n of nodes) {
+      const b = Math.min(ERA_BUCKETS - 1, Math.max(0, Math.floor((n.x_norm || 0) * ERA_BUCKETS)));
+      sums[b] += rawWeight(n);
+    }
+    // 3-bucket smoothing avoids discontinuities at bucket boundaries.
+    for (let i = 0; i < ERA_BUCKETS; i++) {
+      const a = i > 0 ? sums[i - 1] : sums[i];
+      const c = i < ERA_BUCKETS - 1 ? sums[i + 1] : sums[i];
+      const smooth = Math.max(1e-6, (a + sums[i] + c) / 3);
+      eraNorm[i] = Math.pow(smooth, ERA_ALPHA);
+    }
+  })();
+
+  // Power compression on top of era normalization. Raw weights span 5+ orders
+  // of magnitude (Pop 12880 vs Witch House 0.0004), so even after era norm the
+  // packer renders giants enormous and niches sub-pixel with nothing visible
+  // in between. pow(x, 0.4) lifts the long tail (small values rise toward 1)
+  // while leaving the hierarchy among giants intact (large values stay large).
+  // Smaller exponent = more compression; 0.4 is the empirical sweet spot.
+  const WEIGHT_COMPRESS = 0.4;
+  function weight(d) {
+    const b = Math.min(ERA_BUCKETS - 1, Math.max(0, Math.floor((d.x_norm || 0) * ERA_BUCKETS)));
+    const eraW = rawWeight(d) / eraNorm[b];
+    return Math.pow(Math.max(1e-9, eraW), WEIGHT_COMPRESS);
+  }
   function radius(d) { return d._r != null ? d._r : 1; }
 
-  // ----- DOM scaffolding -----
+  // Format popularity (a percentage in 0..100) with sensible precision across
+  // five orders of magnitude: 23.4%, 1.7%, 0.04%, 0.0008%.
+  function formatPop(p) {
+    if (p == null) return '?';
+    if (p >= 10) return p.toFixed(1) + '%';
+    if (p >= 1) return p.toFixed(2) + '%';
+    if (p >= 0.01) return p.toFixed(3) + '%';
+    return p.toExponential(1) + '%';
+  }
+
   const root = svg.append('g').attr('class', 'view');
   const gEdges = root.append('g').attr('class', 'edges');
   const gNodes = root.append('g').attr('class', 'nodes');
-  // Fixed-position axis overlay (not subject to zoom transform).
   const gAxisFixed = svg.append('g').attr('class', 'axis-fixed');
   gAxisFixed.append('rect').attr('class', 'axis-bg');
   const gAxisGrid = gAxisFixed.append('g');
@@ -220,7 +272,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
 
   let currentTransform = d3.zoomIdentity;
   let pendingZoomFrame = false;
-  // Wide scale extent: pop-1 bubbles are sub-pixel at fit, need ~100× zoom to read.
   const zoom = d3.zoom().scaleExtent([0.2, 200]).on('zoom', e => {
     currentTransform = e.transform;
     root.attr('transform', e.transform);
@@ -237,10 +288,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
   function resize() {
     const rect = svg.node().getBoundingClientRect();
     W = rect.width; H = rect.height;
-    // Allocate ~14px per node minimum so dense lineages have room.
-    // Virtual Y space tracks the viewport so the initial fit isn't distorted by
-    // a tall canvas; collision force packs bubbles within available height.
-    virtualH = H;
     drawAxis();
     layout();
   }
@@ -255,7 +302,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     gAxisFixed.select('rect.axis-bg')
       .attr('x', 0).attr('y', yBar - 4).attr('width', W).attr('height', 30)
       .attr('fill', 'rgba(14,15,19,0.92)');
-    // Vertical grid lines as a screen-space overlay too (faint).
     const grid = gAxisGrid.selectAll('line').data(ticks);
     grid.enter().append('line').merge(grid)
       .attr('class', 'gridline')
@@ -273,24 +319,17 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     lab.exit().remove();
   }
 
-  // ----- Layout -----
   let layoutDone = false;
   function layout() {
     const sel = gNodes.selectAll('g.node').data(nodes, d => d.id);
     const enter = sel.enter().append('g').attr('class', 'node')
-      .on('mouseenter', (e, d) => {
-        hoveredId = d.id;
-        if (!pinned) highlight(d); else updateLabels();
-      })
-      .on('mouseleave', () => {
-        hoveredId = null;
-        if (!pinned) clearHighlight(); else updateLabels();
-      })
-      .on('click', (e, d) => openPanel(d));
+      .on('mouseenter', (e, d) => onHover(d, e))
+      .on('mousemove', (e) => moveTooltip(e))
+      .on('mouseleave', () => onUnhover())
+      .on('click', (e, d) => { e.stopPropagation(); onClick(d, e); });
     enter.append('circle');
-    enter.append('text').attr('text-anchor', 'middle').attr('dy', 3);
+    enter.append('text').attr('text-anchor', 'middle');
 
-    // Force-relax Y to remove overlaps while keeping the lineage cluster.
     relaxY();
     nodeElById.clear();
     gNodes.selectAll('g.node')
@@ -300,35 +339,47 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     gNodes.selectAll('g.node circle')
       .attr('r', d => radius(d))
       .attr('fill', d => d.color || '#888');
-    updateLabels();
 
     drawEdges();
-    gNodes.selectAll('g.node').attr('opacity', d => d.death_year != null ? 0.55 : 1.0);
     layoutDone = true;
+    updateLabels();
     fitView();
   }
 
-  function fitView() {
-    const xs = nodes.map(d => d._tx).filter(v => v != null);
-    const ys = nodes.map(d => d._y).filter(v => v != null);
+  function fitView(idsBox) {
+    let xs = [], ys = [], rs = [];
+    if (idsBox && idsBox.size) {
+      for (const id of idsBox) {
+        const n = byId.get(id);
+        if (n && n._tx != null) { xs.push(n._tx); ys.push(n._y); rs.push(radius(n)); }
+      }
+    } else {
+      for (const d of nodes) if (d._tx != null) { xs.push(d._tx); ys.push(d._y); rs.push(radius(d)); }
+    }
     if (!xs.length) return;
-    const pad = 8;
-    const xMin = d3.min(xs) - pad, xMax = d3.max(xs) + pad;
-    const yMin = d3.min(ys) - pad, yMax = d3.max(ys) + pad;
+    const pad = 32;
+    let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+    for (let i = 0; i < xs.length; i++) {
+      if (xs[i] - rs[i] < xMin) xMin = xs[i] - rs[i];
+      if (xs[i] + rs[i] > xMax) xMax = xs[i] + rs[i];
+      if (ys[i] - rs[i] < yMin) yMin = ys[i] - rs[i];
+      if (ys[i] + rs[i] > yMax) yMax = ys[i] + rs[i];
+    }
+    xMin -= pad; xMax += pad; yMin -= pad; yMax += pad;
+    // The side panel covers the right edge of the SVG when open, so reserve
+    // that strip and center the trace inside the visible viewport instead of
+    // the full canvas — otherwise far-right genres sit under the panel.
+    const panelOpen = panel.classList.contains('open');
+    const panelW = panelOpen ? panel.getBoundingClientRect().width : 0;
+    const visibleW = W - panelW;
     const availH = H - 40;
-    // The pack already sized the layout to the viewport, so k≈1 fits both axes.
-    const k = Math.min(W / (xMax - xMin), availH / (yMax - yMin));
-    const tx = (W - (xMin + xMax) * k) / 2;
+    const k = Math.min(50, Math.min(visibleW / Math.max(1, xMax - xMin), availH / Math.max(1, yMax - yMin)));
+    const tx = (visibleW - (xMin + xMax) * k) / 2;
     const ty = (availH - (yMin + yMax) * k) / 2;
-    svg.transition().duration(250).call(zoom.transform,
+    svg.transition().duration(420).call(zoom.transform,
       d3.zoomIdentity.translate(tx, ty).scale(k));
   }
 
-  // Column-pack with auto-fit factor. weights are predetermined; we search over
-  // numCols to find the radius factor `a` that makes both viewport dimensions
-  // tight: cellW = 2·a·maxW + pad fills availW, and the tallest column equals
-  // availH. Picking the numCols that maximizes `a` gives the largest readable
-  // bubbles for the current aspect ratio.
   const PACK_PAD = 1.0;
   function relaxY() {
     const N = nodes.length;
@@ -352,7 +403,7 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       const aX = (cellW - PACK_PAD) / (2 * maxW_);
       const aY = (availH - PACK_PAD * Math.max(0, mC - 1)) / Math.max(1, 2 * mS);
       const a = Math.min(aX, aY);
-      if (a > best.factor) best = { numCols: nc, factor: a, mS, mC };
+      if (a > best.factor) best = { numCols: nc, factor: a };
     }
 
     const { numCols, factor } = best;
@@ -380,7 +431,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       }
     }
   }
-  function reheat() {}
 
   function edgePath(d) {
     const x1 = d.s._tx, y1 = d.s._y;
@@ -389,8 +439,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     return `M${x1},${y1}C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
   }
 
-  // Edge index: id → array of edge DOM elements incident to this node.
-  // Lets highlight() touch only the lit subgraph instead of all 10K paths.
   const edgesByNode = new Map();
   function drawEdges() {
     const data = [];
@@ -405,7 +453,10 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     const merged = sel.enter().append('path').attr('class', 'edge').merge(sel)
       .attr('d', edgePath)
       .attr('stroke', d => d.t.color || '#666')
-      .attr('stroke-width', d => Math.max(0.4, Math.min(d.s.popularity, d.t.popularity) * 0.18));
+      .attr('stroke-width', d => {
+        const p = Math.min(d.s.popularity || 0, d.t.popularity || 0);
+        return Math.max(0.4, Math.min(2.0, Math.sqrt(Math.max(0.001, p)) * 0.5));
+      });
     edgesByNode.clear();
     merged.each(function (d) {
       let arr = edgesByNode.get(d.s.id);
@@ -417,111 +468,240 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     });
   }
 
-  window.addEventListener('keydown', e => {
-    if (e.target.tagName === 'INPUT') return;
-    if (e.code === 'Escape') { closePanel(); }
-  });
-
-  // ----- Highlight, panel, search -----
-  const HIGHLIGHT_DEPTH = 1;
-  function neighborhood(d, depth) {
-    const lit = new Set([d.id]);
-    let up = [d.id];
-    for (let h = 0; h < depth && up.length; h++) {
-      const next = [];
-      for (const id of up) {
-        for (const p of (byId.get(id)?.parents || [])) {
-          if (!lit.has(p)) { lit.add(p); next.push(p); }
+  // Precompute descendant closures once (used for the multi-select intersection).
+  const descendantsOf = new Map();
+  (function buildClosures() {
+    for (const n of nodes) descendantsOf.set(n.id, new Set());
+    for (const n of nodes) {
+      const dSet = descendantsOf.get(n.id);
+      const seen = new Set([n.id]);
+      let frontier = [n.id];
+      while (frontier.length) {
+        const next = [];
+        for (const id of frontier) {
+          for (const c of (byId.get(id)?.children || [])) {
+            if (!seen.has(c)) { seen.add(c); next.push(c); dSet.add(c); }
+          }
         }
+        frontier = next;
       }
-      up = next;
     }
-    let down = [d.id];
-    for (let h = 0; h < depth && down.length; h++) {
-      const next = [];
-      for (const id of down) {
-        for (const c of (byId.get(id)?.children || [])) {
-          if (!lit.has(c)) { lit.add(c); next.push(c); }
-        }
-      }
-      down = next;
-    }
-    return lit;
-  }
-  let pinned = null;       // node id whose highlight is locked
-  let hoveredId = null;    // id of currently hovered node (transient)
-  let litIds = null;       // current lit set (when something is highlighted)
-  const nodeElById = new Map();  // id → <g.node> DOM element
-  let litNodeEls = [];     // currently .lit-marked <g.node> elements
-  let litEdgeEls = [];     // currently .lit-marked <path.edge> elements
+  })();
 
-  // Label visibility tracks SCREEN size, not world size. At fit zoom only the
-  // huge bubbles read; zoom in and more labels appear as smaller bubbles cross
-  // the readability threshold. Hover/pin always force their neighborhood labels.
-  const LABEL_SCREEN_THRESHOLD = 8; // px on screen before a label is shown
-  function updateLabels() {
-    const forced = (hoveredId || litIds)
-      ? new Set([...(litIds || []), ...(hoveredId ? [hoveredId] : [])])
-      : null;
-    const k = (currentTransform && currentTransform.k) || 1;
-    gNodes.selectAll('g.node text')
-      .text(d => {
-        if (forced) return forced.has(d.id) ? d.name : '';
-        return radius(d) * k >= LABEL_SCREEN_THRESHOLD ? d.name : '';
-      })
-      .attr('font-weight', d => forced && forced.has(d.id) ? 600 : 400);
+  // Lineage trace is always one hop: the node plus its direct parents and direct
+  // children. Earlier 1/2/∞ selectors made hub nodes ("Folk music") unusable.
+  function closureOf(id) {
+    const set = new Set([id]);
+    const n = byId.get(id);
+    if (!n) return set;
+    for (const p of (n.parents || [])) set.add(p);
+    for (const c of (n.children || [])) set.add(c);
+    return set;
   }
 
-  // Targeted highlight: parent-class CSS dims everything, then we add `.lit`
-  // only to the small neighborhood subset. O(|lit|) instead of O(all-nodes).
-  function highlight(d) {
-    const lit = neighborhood(d, HIGHLIGHT_DEPTH);
-    litIds = lit;
-    for (const el of litNodeEls) el.classList.remove('lit');
+  const selected = new Set();
+  let traced = new Set();
+  let intersected = new Set();
+  const nodeElById = new Map();
+  let litNodeEls = [];
+  let litEdgeEls = [];
+  let hoveredId = null;
+
+  function recomputeTrace() {
+    traced = new Set();
+    intersected = new Set();
+    if (!selected.size) return;
+    for (const id of selected) {
+      for (const x of closureOf(id)) traced.add(x);
+    }
+    if (selected.size >= 2) {
+      const arr = [...selected];
+      let inter = new Set([arr[0], ...(descendantsOf.get(arr[0]) || [])]);
+      for (let i = 1; i < arr.length; i++) {
+        const ds = new Set([arr[i], ...(descendantsOf.get(arr[i]) || [])]);
+        inter = new Set([...inter].filter(x => ds.has(x)));
+      }
+      for (const id of selected) inter.delete(id);
+      intersected = inter;
+    }
+  }
+
+  function applyTrace() {
+    for (const el of litNodeEls) el.classList.remove('lit', 'selected', 'intersected');
     for (const el of litEdgeEls) el.classList.remove('lit');
     litNodeEls = [];
     litEdgeEls = [];
-    for (const id of lit) {
+    if (!traced.size) {
+      gNodes.classed('traced', false);
+      gEdges.classed('traced', false);
+      updateLabels();
+      return;
+    }
+    for (const id of traced) {
       const el = nodeElById.get(id);
-      if (el) { el.classList.add('lit'); litNodeEls.push(el); }
+      if (!el) continue;
+      el.classList.add('lit');
+      if (selected.has(id)) el.classList.add('selected');
+      else if (intersected.has(id)) el.classList.add('intersected');
+      litNodeEls.push(el);
       const eis = edgesByNode.get(id);
       if (!eis) continue;
       for (const ei of eis) {
-        if (lit.has(ei.e.s.id) && lit.has(ei.e.t.id) && !ei.el.classList.contains('lit')) {
+        if (traced.has(ei.e.s.id) && traced.has(ei.e.t.id) && !ei.el.classList.contains('lit')) {
           ei.el.classList.add('lit');
           litEdgeEls.push(ei.el);
         }
       }
     }
-    gNodes.classed('dimmed', true);
-    gEdges.classed('dimmed', true);
+    gNodes.classed('traced', true);
+    gEdges.classed('traced', true);
     updateLabels();
   }
-  function clearHighlight() {
-    if (pinned) { highlight(byId.get(pinned)); return; }
-    litIds = null;
-    for (const el of litNodeEls) el.classList.remove('lit');
-    for (const el of litEdgeEls) el.classList.remove('lit');
-    litNodeEls = [];
-    litEdgeEls = [];
-    gNodes.classed('dimmed', false);
-    gEdges.classed('dimmed', false);
+
+  function commitSelect(id, additive) {
+    if (!byId.has(id)) return;
+    if (!additive) {
+      selected.clear();
+      selected.add(id);
+      openPanel(byId.get(id));
+    } else {
+      if (selected.has(id)) selected.delete(id);
+      else selected.add(id);
+      if (!selected.size) closePanel();
+    }
+    recomputeTrace();
+    applyTrace();
+    updatePill();
+    if (traced.size) fitView(traced);
+  }
+
+  function clearSelection() {
+    if (!selected.size && !traced.size) { fitView(); return; }
+    selected.clear();
+    recomputeTrace();
+    applyTrace();
+    updatePill();
+    closePanel();
+    fitView();
+  }
+
+  function updatePill() {
+    const pill = document.getElementById('selPill');
+    if (!selected.size) {
+      pill.textContent = 'click a genre to trace its lineage';
+      pill.classList.remove('active');
+    } else if (selected.size === 1) {
+      const n = byId.get([...selected][0]);
+      pill.textContent = `tracing: ${n.name} · ${traced.size} nodes`;
+      pill.classList.add('active');
+    } else {
+      pill.textContent = `tracing ${selected.size} genres · ${traced.size} nodes · ${intersected.size} shared descendants`;
+      pill.classList.add('active');
+    }
+  }
+
+  function onHover(d, e) {
+    hoveredId = d.id;
+    const el = nodeElById.get(d.id);
+    if (el) el.classList.add('hovered');
+    const era = `${d.birth_year}${d.death_year ? '–' + d.death_year : '–present'}`;
+    const desc = d.description ? d.description.slice(0, 140) + (d.description.length > 140 ? '…' : '') : '';
+    tooltipEl.innerHTML = `<div class="name">${escapeHtml(d.name)}</div>
+      <div class="era">${era} · ${formatPop(d.popularity)} of peak-era listeners</div>
+      ${desc ? `<div class="desc">${escapeHtml(desc)}</div>` : ''}`;
+    tooltipEl.classList.add('show');
+    moveTooltip(e);
     updateLabels();
+  }
+  function moveTooltip(e) {
+    if (!tooltipEl.classList.contains('show')) return;
+    const r = svg.node().getBoundingClientRect();
+    const x = e.clientX - r.left + 14;
+    const y = e.clientY - r.top + 14;
+    const tw = tooltipEl.offsetWidth, th = tooltipEl.offsetHeight;
+    tooltipEl.style.left = Math.min(W - tw - 8, x) + 'px';
+    tooltipEl.style.top = Math.min(H - th - 8, y) + 'px';
+  }
+  function onUnhover() {
+    if (hoveredId) {
+      const el = nodeElById.get(hoveredId);
+      if (el) el.classList.remove('hovered');
+    }
+    hoveredId = null;
+    tooltipEl.classList.remove('show');
+    updateLabels();
+  }
+  function onClick(d, e) { commitSelect(d.id, e.shiftKey); }
+
+  svg.on('click', () => { if (selected.size) clearSelection(); });
+
+  // Constant screen-pixel font + collision pass: text inside the zoomed group is
+  // counter-scaled by 1/k so screen size stays constant; the collision pass then
+  // hides the lower-priority label of any overlapping pair, so zooming in
+  // monotonically reveals labels as bubbles separate on screen.
+  const LABEL_SCREEN_THRESHOLD = 8;
+  const LABEL_BASE_PX = 11;
+  function updateLabels() {
+    if (!layoutDone) return;
+    const k = (currentTransform && currentTransform.k) || 1;
+    const fontWorld = LABEL_BASE_PX / k;
+    const padW = 2 / k;
+    const forced = traced.size ? traced : null;
+
+    const eligible = [];
+    for (const d of nodes) {
+      const isForced = forced && forced.has(d.id);
+      const isHover = hoveredId === d.id;
+      const screenR = radius(d) * k;
+      if (!isForced && !isHover && screenR < LABEL_SCREEN_THRESHOLD) continue;
+      eligible.push(d);
+    }
+    eligible.sort((a, b) => {
+      const aSel = selected.has(a.id), bSel = selected.has(b.id);
+      if (aSel !== bSel) return aSel ? -1 : 1;
+      const aF = forced && forced.has(a.id), bF = forced && forced.has(b.id);
+      if (aF !== bF) return aF ? -1 : 1;
+      const aH = hoveredId === a.id, bH = hoveredId === b.id;
+      if (aH !== bH) return aH ? -1 : 1;
+      if (b.popularity !== a.popularity) return b.popularity - a.popularity;
+      return (a.peak_year || a.birth_year) - (b.peak_year || b.birth_year);
+    });
+
+    const placed = [];
+    const show = new Set();
+    for (const d of eligible) {
+      const w = d.name.length * 0.6 * fontWorld + padW;
+      const h = fontWorld + padW;
+      const x = d._tx;
+      const y = d._y + radius(d) + fontWorld * 1.0;
+      let collide = false;
+      for (const r of placed) {
+        if (Math.abs(r.x - x) * 2 < (r.w + w) &&
+            Math.abs(r.y - y) * 2 < (r.h + h)) { collide = true; break; }
+      }
+      if (collide) continue;
+      placed.push({ x, y, w, h });
+      show.add(d.id);
+    }
+
+    gNodes.selectAll('g.node text')
+      .attr('font-size', fontWorld)
+      .attr('y', d => radius(d) + fontWorld * 1.1)
+      .text(d => show.has(d.id) ? d.name : '')
+      .attr('font-weight', d => (forced && forced.has(d.id)) ? 600 : 400);
   }
 
   const panel = document.getElementById('panel');
   function openPanel(d) {
-    pinned = d.id;
-    highlight(d);
     panel.classList.add('open');
     document.getElementById('pName').textContent = d.name;
     const yr = d.birth_year + (d.death_year ? `–${d.death_year}` : '–present') + ` · peak ${d.peak_year}`;
-    document.getElementById('pMeta').textContent = `${yr}  ·  popularity ${d.popularity}/10`;
+    document.getElementById('pMeta').textContent = `${yr}  ·  ${formatPop(d.popularity)} of peak-era listeners`;
     document.getElementById('pDesc').textContent = d.description || '';
     document.getElementById('pArtists').innerHTML = (d.artists || [])
       .map(a => `<span class="chip">${escapeHtml(a)}</span>`).join('');
     document.getElementById('pExamples').innerHTML = (d.examples || [])
-      .map((e, i) => {
+      .map(e => {
         const q = encodeURIComponent(`${e.artist} ${e.title}`);
         const yt = `https://www.youtube.com/results?search_query=${q}`;
         return `<li>
@@ -540,22 +720,19 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       .map(id => chip(id)).join('') || '<span class="chip" style="opacity:.5">none</span>';
   }
   function closePanel() {
-    pinned = null;
     panel.classList.remove('open');
     stopPlayback();
-    clearHighlight();
   }
   function chip(id) {
     const n = byId.get(id); if (!n) return `<span class="chip" style="opacity:.5">${id}</span>`;
     return `<span class="chip" data-id="${n.id}">${escapeHtml(n.name)}</span>`;
   }
-  document.getElementById('panelClose').onclick = closePanel;
+  document.getElementById('panelClose').onclick = () => clearSelection();
   panel.addEventListener('click', e => {
     const id = e.target.dataset && e.target.dataset.id;
-    if (id && byId.has(id)) openPanel(byId.get(id));
+    if (id && byId.has(id)) commitSelect(id, e.shiftKey);
   });
 
-  // ----- Audio preview via iTunes Search API (free, CORS-enabled, 30s mp3) -----
   const audioEl = new Audio();
   let currentBtn = null;
   const previewCache = new Map();
@@ -593,7 +770,7 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     btn.classList.add('playing');
     btn.textContent = '…';
     const url = await fetchPreview(btn.dataset.artist, btn.dataset.title);
-    if (currentBtn !== btn) return; // user clicked another in the meantime
+    if (currentBtn !== btn) return;
     if (!url) {
       btn.textContent = '✕';
       btn.title = 'No preview found — use the ↗ link to open YouTube';
@@ -608,27 +785,29 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-  // ----- Search -----
   const search = document.getElementById('search');
-  search.addEventListener('input', () => {
+  search.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { search.value = ''; search.blur(); return; }
+    if (e.key !== 'Enter') return;
     const q = search.value.trim().toLowerCase();
-    if (!q) { clearHighlight(); return; }
-    const matches = nodes.filter(n =>
+    if (!q) return;
+    const m = nodes.find(n =>
       n.name.toLowerCase().includes(q) ||
       (n.aliases || []).some(a => a.toLowerCase().includes(q)) ||
       (n.artists || []).some(a => a.toLowerCase().includes(q))
     );
-    if (!matches.length) return;
-    const m = matches[0];
-    openPanel(m);
-    const tx = W / 2 - xOf(m);
-    const ty = H / 2 - (m._y || yScale(m.y || 0.5));
-    svg.transition().duration(450).call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(1.4));
-    highlight(m);
+    if (m) commitSelect(m.id, false);
   });
 
-  // Boot
+  document.getElementById('btnClear').onclick = clearSelection;
+
+  window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === 'Escape') clearSelection();
+  });
+
   resize();
+  updatePill();
 })();
 </script>
 </body>

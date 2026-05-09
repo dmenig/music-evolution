@@ -25,7 +25,11 @@ class GeminiGenreResponse(BaseModel):
     birth_year: int
     death_year: int | None = None
     peak_year: int
-    popularity: int = Field(ge=1, le=10)
+    popularity: float = Field(
+        ge=0.0,
+        le=100.0,
+        description="% of music-listening humans alive at peak_year who were fans/practitioners.",
+    )
     countries: list[str] = Field(
         default_factory=list,
         description="ISO-3166 alpha-2 codes, primary origin first.",
@@ -47,7 +51,7 @@ class GenreNode(BaseModel):
     birth_year: int
     death_year: int | None
     peak_year: int
-    popularity: int
+    popularity: float
     countries: list[str]
     artists: list[str]
     examples: list[ExampleTrack]
