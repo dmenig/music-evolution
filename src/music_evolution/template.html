@@ -41,7 +41,7 @@
   .axis, .axis text, text.axis { fill: #c8cdda !important; font-size: 10px; }
   .axis line, .axis path, line.axis { stroke: #3a3f4d; }
   .gridline { stroke: #1c1f28; }
-  .edge { fill: none; stroke-linecap: round; pointer-events: none; opacity: 0.35; }
+  .edge { fill: none; stroke-linecap: round; pointer-events: none; opacity: 0.12; }
   .node circle { stroke: rgba(255,255,255,0.18); stroke-width: 0.6; }
   .node.dead circle { stroke-dasharray: 2 2; filter: saturate(0.45) brightness(0.72); }
   .nodes.traced g.node { opacity: 0.08; }
@@ -458,7 +458,7 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       .attr('stroke', d => d.t.color || '#666')
       .attr('stroke-width', d => {
         const p = Math.min(d.s.popularity || 0, d.t.popularity || 0);
-        return Math.max(0.4, Math.min(2.0, Math.sqrt(Math.max(0.001, p)) * 0.5));
+        return Math.max(0.25, Math.min(1.0, Math.sqrt(Math.max(0.001, p)) * 0.28));
       });
     edgesByNode.clear();
     merged.each(function (d) {
