@@ -29,9 +29,6 @@
     padding: 5px 10px; border-radius: 6px; font: inherit; }
   header button { cursor: pointer; }
   header button:hover { border-color: var(--accent); }
-  header button.primary { background: var(--accent); color: #1a1305 !important; border-color: var(--accent); font-weight: 600; }
-  header input[type="range"] { accent-color: var(--accent); width: 220px; }
-  header .year { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--accent); min-width: 60px; text-align: center; }
   header .mode-pill { padding: 3px 8px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); font-size: 11px; color: var(--muted); }
   header .hint { font-size: 11px; color: var(--muted); }
   main { position: relative; overflow: hidden; }
@@ -88,10 +85,6 @@
     <div class="group">
       <button id="btnStatic" title="Show every genre at once (default)">All</button>
       <button id="btnStep" title="Step through history (← → or Space)">Step</button>
-    </div>
-    <div class="group">
-      <span class="year" id="yearLabel">all</span>
-      <input id="scrub" type="range" value="2026" step="1" />
     </div>
     <div class="group">
       <span class="hint">Space: next event · ← →: step year · Click bubble for details</span>
@@ -471,9 +464,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
 
   function applyYear(year) {
     currentYear = year;
-    const yl = document.getElementById('yearLabel');
-    yl.textContent = mode === 'static' ? 'all' : year;
-    document.getElementById('scrub').value = year;
     if (!layoutDone) return;
     if (mode === 'static') {
       gNodes.selectAll('g.node').attr('opacity', d => d.death_year != null ? 0.55 : 1.0);
@@ -513,10 +503,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
   }
   document.getElementById('btnStatic').onclick = () => setMode('static');
   document.getElementById('btnStep').onclick = () => setMode('step');
-  document.getElementById('scrub').oninput = e => {
-    if (mode === 'static') setMode('step');
-    applyYear(+e.target.value);
-  };
   window.addEventListener('keydown', e => {
     if (e.target.tagName === 'INPUT') return;
     if (e.code === 'Space') { e.preventDefault(); nextEvent(+1); }
@@ -732,9 +718,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
   });
 
   // Boot
-  document.getElementById('scrub').min = yearMin;
-  document.getElementById('scrub').max = yearMax;
-  document.getElementById('scrub').value = yearMax;
   resize();
   setMode('static');
 })();
