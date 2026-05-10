@@ -23,11 +23,25 @@ BIN_YEARS = 5
 YEAR_MIN_PAD = 20
 YEAR_MAX = 2026
 
+# Lineage-strength multipliers — must match template.html's STRENGTH_W.
+STRENGTH_W: dict[str, float] = {"minor": 0.3, "mid": 0.65, "major": 1.0}
 
-def _radius(node: dict) -> float:
+
+def _weighted_fanout(node: dict, by_id: dict) -> float:
+    total = 0.0
+    for e in node.get("child_edges") or []:
+        child = by_id.get(e["id"])
+        if child is None:
+            continue
+        sw = STRENGTH_W.get(e["strength"], 0.5)
+        total += sw * (child.get("popularity") or 0.0001)
+    return total
+
+
+def _radius(node: dict, by_id: dict) -> float:
     pop = node.get("popularity", 5)
-    kids = len(node.get("children", []))
-    score = pop + INFLUENCE_WEIGHT * kids
+    fanout = _weighted_fanout(node, by_id)
+    score = pop + INFLUENCE_WEIGHT * fanout
     area = RADIUS_BASE + RADIUS_PER_SCORE * score
     return max(2.5, math.sqrt(area / math.pi)) * SIZE_MULTIPLIER
 
@@ -123,7 +137,8 @@ def _relax_y(
     # radius. With CANVAS sized below typical viewport, fit-zoom k>=1 so
     # screen spacing = world_spacing * k >= 2*radius. No overlap at fit or
     # any zoom-in.
-    radii = {n["id"]: _radius(n) for n in nodes}
+    by_id = {n["id"]: n for n in nodes}
+    radii = {n["id"]: _radius(n, by_id) for n in nodes}
     cols = 320
     x_min = min(xs.values())
     x_max = max(xs.values())
@@ -163,7 +178,8 @@ def assign_layout(nodes: list[dict]) -> None:
     xs = {n["id"]: _x_world(n, jit, bins, total) for n in nodes}
     y_target = _initial_y_targets(nodes)
     ys = _relax_y(nodes, xs, y_target)
+    by_id = {n["id"]: n for n in nodes}
     for n in nodes:
         n["x_norm"] = xs[n["id"]] / CANVAS_W
         n["y_norm"] = ys[n["id"]] / CANVAS_H
-        n["radius"] = _radius(n)
+        n["radius"] = _radius(n, by_id)

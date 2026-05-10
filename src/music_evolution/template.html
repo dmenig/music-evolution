@@ -243,12 +243,22 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     return margin.left + w * cdfAt(Math.max(yearMin, Math.min(yearMax, year)));
   }
 
-  // Raw weight: popularity² × √(1+children). Popularity dominates; fanout is
-  // a mild structural boost.
+  // Raw weight: popularity² × √(1 + weighted_fanout). Each child counts toward
+  // the fanout in proportion to (a) the LLM-rated lineage strength of the edge
+  // and (b) the child's own popularity. So spawning Pop is worth far more than
+  // spawning a microscene, and a major-strength child counts ~3× a minor one.
+  const STRENGTH_W = { minor: 0.3, mid: 0.65, major: 1.0 };
   function rawWeight(d) {
-    const c = (d.children && d.children.length) || 0;
+    const edges = d.child_edges || [];
+    let weighted = 0;
+    for (const e of edges) {
+      const child = byId.get(e.id);
+      if (!child) continue;
+      const sw = STRENGTH_W[e.strength] != null ? STRENGTH_W[e.strength] : 0.5;
+      weighted += sw * (child.popularity || 0.0001);
+    }
     const p = d.popularity || 0.0001;
-    return p * p * Math.sqrt(1 + c);
+    return p * p * Math.sqrt(1 + weighted);
   }
 
   // Per-era normalization. Dividing each node's weight by bucket_sum^α
@@ -847,7 +857,7 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
         const q = encodeURIComponent(`${e.artist} ${e.title}`);
         const yt = `https://www.youtube.com/results?search_query=${q}`;
         const playBtn = e.preview_url
-          ? `<button class="playbtn" data-url="${escapeHtml(e.preview_url)}" title="Play 30s preview (${escapeHtml(e.preview_provider || '')})">▶</button>`
+          ? `<button class="playbtn" data-provider="${escapeHtml(e.preview_provider || '')}" data-url="${escapeHtml(e.preview_url)}" data-artist="${escapeHtml(e.artist)}" data-title="${escapeHtml(e.title)}" title="Play 30s preview (${escapeHtml(e.preview_provider || '')})">▶</button>`
           : `<button class="playbtn" disabled title="No preview available — use the ↗ link" style="opacity:.35;cursor:default">·</button>`;
         return `<li>
           ${playBtn}
@@ -893,16 +903,55 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     setTimeout(stopPlayback, 1200);
   });
 
-  panel.addEventListener('click', e => {
+  // Resolve a fresh preview URL at click time. Deezer's CDN URLs are time-signed
+  // (`hdnea=exp=…`) and expire ~hours after issuance, so the URL we baked at build
+  // time can't be played later. iTunes's `audio-ssl.itunes.apple.com` URLs are
+  // stable, so for those we play the baked URL directly.
+  //
+  // Deezer's API doesn't send `Access-Control-Allow-Origin`, so `fetch()` is blocked
+  // — JSONP (script-tag injection with `output=jsonp&callback=…`) is the documented
+  // workaround and bypasses CORS by design.
+  function jsonp(url, timeoutMs) {
+    return new Promise(resolve => {
+      const cb = '_jp' + Math.random().toString(36).slice(2);
+      const s = document.createElement('script');
+      let done = false;
+      const finish = (v) => { if (done) return; done = true; delete window[cb]; s.remove(); resolve(v); };
+      window[cb] = (data) => finish(data);
+      s.onerror = () => finish(null);
+      s.src = `${url}${url.includes('?') ? '&' : '?'}output=jsonp&callback=${cb}`;
+      document.body.appendChild(s);
+      setTimeout(() => finish(null), timeoutMs || 5000);
+    });
+  }
+
+  async function resolveFreshUrl(btn) {
+    const provider = btn.dataset.provider;
+    const baked = btn.dataset.url;
+    if (provider === 'itunes') return baked;
+    const q = encodeURIComponent(`${btn.dataset.artist} ${btn.dataset.title}`);
+    const j = await jsonp(`https://api.deezer.com/search?q=${q}&limit=3`);
+    const hit = j && j.data && j.data.find(x => x && x.preview);
+    return hit ? hit.preview : null;
+  }
+
+  panel.addEventListener('click', async e => {
     const btn = e.target.closest('.playbtn');
     if (!btn || btn.disabled) return;
     e.stopPropagation();
     if (currentBtn === btn) { stopPlayback(); return; }
     stopPlayback();
-    const url = btn.dataset.url;
-    if (!url) return;
     currentBtn = btn;
     btn.classList.add('playing');
+    btn.textContent = '…';
+    const url = await resolveFreshUrl(btn);
+    if (currentBtn !== btn) return;
+    if (!url) {
+      btn.textContent = '✕';
+      btn.title = 'Preview failed to load';
+      setTimeout(() => { if (currentBtn === btn) stopPlayback(); }, 1200);
+      return;
+    }
     btn.textContent = '■';
     audioEl.src = url;
     audioEl.play().catch(() => stopPlayback());

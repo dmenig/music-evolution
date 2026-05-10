@@ -8,7 +8,7 @@ from google import genai
 from google.genai import types
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from .prompts import EXPAND_NODE_SYSTEM, render_expand_prompt
+from .prompts import EXPAND_NODE_SYSTEM, OriginatorContext, render_expand_prompt
 from .schema import GeminiGenreResponse
 
 MODEL = "gemini-3.1-pro-preview"
@@ -20,11 +20,13 @@ def _client() -> genai.Client:
 
 
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=2, min=2, max=60))
-def _call_gemini(name: str) -> GeminiGenreResponse:
+def _call_gemini(
+    name: str, wiki_description: str | None, originators: list[OriginatorContext]
+) -> GeminiGenreResponse:
     client = _client()
     resp = client.models.generate_content(
         model=MODEL,
-        contents=render_expand_prompt(name),
+        contents=render_expand_prompt(name, wiki_description, originators),
         config=types.GenerateContentConfig(
             system_instruction=EXPAND_NODE_SYSTEM,
             temperature=0.2,
@@ -39,12 +41,17 @@ def _call_gemini(name: str) -> GeminiGenreResponse:
     return parsed
 
 
-def expand_node(canonical: str, display_name: str) -> GeminiGenreResponse:
+def expand_node(
+    canonical: str,
+    display_name: str,
+    wiki_description: str | None = None,
+    originators: list[OriginatorContext] | None = None,
+) -> GeminiGenreResponse:
     """Cache-aware expansion. Reads data/raw/<canonical>.json if present."""
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     cache = RAW_DIR / f"{canonical}.json"
     if cache.exists():
         return GeminiGenreResponse.model_validate_json(cache.read_text())
-    result = _call_gemini(display_name)
+    result = _call_gemini(display_name, wiki_description, originators or [])
     cache.write_text(json.dumps(result.model_dump(), indent=2, ensure_ascii=False))
     return result
