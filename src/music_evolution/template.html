@@ -41,18 +41,22 @@
   .axis, .axis text, text.axis { fill: #c8cdda !important; font-size: 10px; }
   .axis line, .axis path, line.axis { stroke: #3a3f4d; }
   .gridline { stroke: #1c1f28; }
-  .edge { fill: none; stroke-linecap: round; pointer-events: none; opacity: 0.12; }
+  .edge { fill: none; stroke-linecap: round; pointer-events: none;
+    display: none; }
+  .edge.lit { display: inline; opacity: 0.85; }
+  g.view { will-change: transform; }
   .node circle { stroke: rgba(255,255,255,0.18); stroke-width: 0.6; }
   .node.dead circle { stroke-dasharray: 2 2; filter: saturate(0.45) brightness(0.72); }
+  .nodes.traced { will-change: opacity; }
   .nodes.traced g.node { opacity: 0.08; }
   .nodes.traced g.node.lit { opacity: 1; }
-  .edges.traced path.edge { opacity: 0.04; }
-  .edges.traced path.edge.lit { opacity: 0.85; }
+  .nodes.traced g.node:not(.lit) { pointer-events: none; }
+  .node.tiny circle { display: none; }
   .node.lit circle { stroke: rgba(255,255,255,0.92); stroke-width: 1.4; }
   .node.intersected circle { stroke: var(--accent-2); stroke-width: 2.2; }
   .node.selected circle { stroke: var(--accent); stroke-width: 2.6; }
   .node.hovered circle { stroke: rgba(255,255,255,0.95); stroke-width: 1.4; }
-  .node text { fill: #f5f7ff; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,0.95); }
+  .label { fill: #f5f7ff; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,0.95); }
   .tooltip { position: absolute; pointer-events: none; background: rgba(22,24,31,0.95);
     border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; font-size: 12px;
     max-width: 280px; line-height: 1.35; z-index: 6; opacity: 0; transition: opacity .12s; }
@@ -214,14 +218,13 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     return p * p * Math.sqrt(1 + c);
   }
 
-  // Per-era normalization. Without this, dense eras (1970s–2010s) crowd a few
-  // columns with mega-weights, the packer's height constraint binds on those
-  // columns alone, every bubble shrinks globally to fit, and sparse eras are
-  // left empty. Dividing each node's weight by bucket_sum^α (with α=0.5)
-  // brings each era's total mass to √(original) — ratios within an era are
-  // preserved, but cross-era variance collapses, so the whole canvas fills.
+  // Per-era normalization. Dividing each node's weight by bucket_sum^α
+  // equalizes total visual mass across eras: α=0.5 gives partial flattening
+  // (each era's total scales as √original); α=1.0 gives full flattening
+  // (every era's total identical → roughly constant column height across X).
+  // Intra-era ratios are preserved at any α; only cross-era variance changes.
   const ERA_BUCKETS = 20;
-  const ERA_ALPHA = 0.5;
+  const ERA_ALPHA = 1.0;
   const eraNorm = new Float64Array(ERA_BUCKETS);
   (function computeEraNorm() {
     const sums = new Float64Array(ERA_BUCKETS);
@@ -265,23 +268,39 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
   const root = svg.append('g').attr('class', 'view');
   const gEdges = root.append('g').attr('class', 'edges');
   const gNodes = root.append('g').attr('class', 'nodes');
+  const gLabels = root.append('g').attr('class', 'labels');
   const gAxisFixed = svg.append('g').attr('class', 'axis-fixed');
   gAxisFixed.append('rect').attr('class', 'axis-bg');
   const gAxisGrid = gAxisFixed.append('g');
   const gAxisLabels = gAxisFixed.append('g');
 
   let currentTransform = d3.zoomIdentity;
-  let pendingZoomFrame = false;
+  let lastSettleK = null;
+  let zoomIdleTimer = null;
+  let pendingAxisFrame = false;
+  function scheduleAxis() {
+    if (pendingAxisFrame) return;
+    pendingAxisFrame = true;
+    requestAnimationFrame(() => { pendingAxisFrame = false; drawAxis(); });
+  }
+  function settleZoom() {
+    scheduleAxis();
+    if (!layoutDone) return;
+    if (currentTransform.k !== lastSettleK) {
+      updateLabels();
+      applyTinyCulling();
+      lastSettleK = currentTransform.k;
+    }
+  }
   const zoom = d3.zoom().scaleExtent([0.2, 200]).on('zoom', e => {
     currentTransform = e.transform;
     root.attr('transform', e.transform);
-    if (pendingZoomFrame) return;
-    pendingZoomFrame = true;
-    requestAnimationFrame(() => {
-      pendingZoomFrame = false;
-      drawAxis();
-      if (layoutDone) updateLabels();
-    });
+    scheduleAxis();
+    if (zoomIdleTimer) clearTimeout(zoomIdleTimer);
+    zoomIdleTimer = setTimeout(() => { zoomIdleTimer = null; settleZoom(); }, 90);
+  }).on('end', () => {
+    if (zoomIdleTimer) { clearTimeout(zoomIdleTimer); zoomIdleTimer = null; }
+    settleZoom();
   });
   svg.call(zoom);
 
@@ -328,7 +347,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       .on('mouseleave', () => onUnhover())
       .on('click', (e, d) => { e.stopPropagation(); onClick(d, e); });
     enter.append('circle');
-    enter.append('text').attr('text-anchor', 'middle');
 
     relaxY();
     nodeElById.clear();
@@ -343,6 +361,7 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     drawEdges();
     layoutDone = true;
     updateLabels();
+    applyTinyCulling();
     fitView();
   }
 
@@ -536,7 +555,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     litEdgeEls = [];
     if (!traced.size) {
       gNodes.classed('traced', false);
-      gEdges.classed('traced', false);
       updateLabels();
       return;
     }
@@ -557,7 +575,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       }
     }
     gNodes.classed('traced', true);
-    gEdges.classed('traced', true);
     updateLabels();
   }
 
@@ -638,10 +655,11 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
 
   svg.on('click', () => { if (selected.size) clearSelection(); });
 
-  // Constant screen-pixel font + collision pass: text inside the zoomed group is
-  // counter-scaled by 1/k so screen size stays constant; the collision pass then
-  // hides the lower-priority label of any overlapping pair, so zooming in
-  // monotonically reveals labels as bubbles separate on screen.
+  // Constant screen-pixel font + collision pass. Labels live in their own
+  // `gLabels` layer (rendered after `gNodes` so they always paint on top).
+  // Only labels currently shown are mounted in the DOM — at fit zoom that's
+  // ~30 elements rather than 4000 <text>s. Font-size is set once on the
+  // parent layer so each zoom-settle does one attribute write, not 4000.
   const LABEL_SCREEN_THRESHOLD = 8;
   const LABEL_BASE_PX = 11;
   function updateLabels() {
@@ -671,12 +689,12 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     });
 
     const placed = [];
-    const show = new Set();
+    const showArr = [];
     for (const d of eligible) {
       const w = d.name.length * 0.6 * fontWorld + padW;
       const h = fontWorld + padW;
       const x = d._tx;
-      const y = d._y + radius(d) + fontWorld * 1.0;
+      const y = d._y + radius(d) + fontWorld * 0.6;
       let collide = false;
       for (const r of placed) {
         if (Math.abs(r.x - x) * 2 < (r.w + w) &&
@@ -684,15 +702,47 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       }
       if (collide) continue;
       placed.push({ x, y, w, h });
-      show.add(d.id);
+      showArr.push(d);
     }
 
-    gNodes.selectAll('g.node text')
-      .attr('font-size', fontWorld)
-      .attr('y', d => radius(d) + fontWorld * 1.1)
-      .text(d => show.has(d.id) ? d.name : '')
+    gLabels.attr('font-size', fontWorld);
+    const sel = gLabels.selectAll('text').data(showArr, d => d.id);
+    sel.exit().remove();
+    const enter = sel.enter().append('text')
+      .attr('class', 'label')
+      .attr('text-anchor', 'middle')
+      .text(d => d.name);
+    enter.merge(sel)
+      .attr('x', d => d._tx)
+      .attr('y', d => d._y + radius(d) + fontWorld * 0.9)
       .attr('font-weight', d => (forced && forced.has(d.id)) ? 600 : 400);
   }
+
+  // Sub-pixel circle culling: at fit zoom most circles render <1 screen px and
+  // the browser still paints them. Toggle `.tiny` (CSS hides circle) on the
+  // diff vs the last set, so each settle only touches nodes whose state flipped.
+  let lastTinySet = new Set();
+  function applyTinyCulling() {
+    if (!layoutDone) return;
+    const k = currentTransform.k || 1;
+    const minWorld = 0.4 / k;
+    const next = new Set();
+    for (const d of nodes) if (radius(d) < minWorld) next.add(d.id);
+    for (const id of lastTinySet) {
+      if (!next.has(id)) {
+        const el = nodeElById.get(id);
+        if (el) el.classList.remove('tiny');
+      }
+    }
+    for (const id of next) {
+      if (!lastTinySet.has(id)) {
+        const el = nodeElById.get(id);
+        if (el) el.classList.add('tiny');
+      }
+    }
+    lastTinySet = next;
+  }
+
 
   const panel = document.getElementById('panel');
   function openPanel(d) {
