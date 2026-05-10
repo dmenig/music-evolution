@@ -45,16 +45,17 @@
     display: none; }
   .edge.lit { display: inline; opacity: 0.85; }
   g.view { will-change: transform; }
-  .node circle { stroke: rgba(255,255,255,0.18); stroke-width: 0.6; }
-  .node.dead circle { stroke-dasharray: 2 2; filter: saturate(0.45) brightness(0.72); }
+  .node circle.disk { stroke: rgba(255,255,255,0.18); stroke-width: 0.6; pointer-events: none; }
+  .node circle.hit { fill: transparent; stroke: none; pointer-events: all; }
+  .node.dead circle.disk { stroke-dasharray: 2 2; filter: saturate(0.45) brightness(0.72); }
   .nodes.traced { will-change: opacity; }
   .nodes.traced g.node { opacity: 0.08; }
   .nodes.traced g.node.lit { opacity: 1; }
-  .node.tiny circle { display: none; }
-  .node.lit circle { stroke: rgba(255,255,255,0.92); stroke-width: 1.4; }
-  .node.intersected circle { stroke: var(--accent-2); stroke-width: 2.2; }
-  .node.selected circle { stroke: var(--accent); stroke-width: 2.6; }
-  .node.hovered circle { stroke: rgba(255,255,255,0.95); stroke-width: 1.4; }
+  .node.tiny circle.disk { display: none; }
+  .node.lit circle.disk { stroke: rgba(255,255,255,0.92); stroke-width: 1.4; }
+  .node.intersected circle.disk { stroke: var(--accent-2); stroke-width: 2.2; }
+  .node.selected circle.disk { stroke: var(--accent); stroke-width: 2.6; }
+  .node.hovered circle.disk { stroke: rgba(255,255,255,0.95); stroke-width: 1.4; }
   .label { fill: #f5f7ff; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,0.95); }
   .tooltip { position: absolute; pointer-events: none; background: rgba(22,24,31,0.95);
     border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; font-size: 12px;
@@ -411,7 +412,12 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       .on('mousemove', (e) => moveTooltip(e))
       .on('mouseleave', () => onUnhover())
       .on('click', (e, d) => { e.stopPropagation(); onClick(d, e); });
-    enter.append('circle');
+    // Transparent hit circle (below) matches the visible outer edge of the
+    // bubble (radius + max-stroke-half-width). Visible disk (above) renders
+    // the colored fill + stroke unchanged. The hit circle gets all events;
+    // the visible disk has pointer-events: none so it never intercepts.
+    enter.append('circle').attr('class', 'hit');
+    enter.append('circle').attr('class', 'disk');
 
     relaxYInit();
     relaxYTick(SIM_TICKS_FIRST);
@@ -425,9 +431,15 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       .attr('transform', d => `translate(${d._tx},${d._y})`)
       .classed('dead', d => d.death_year != null)
       .each(function (d) { nodeElById.set(d.id, this); });
-    gNodes.selectAll('g.node circle')
+    gNodes.selectAll('g.node circle.disk')
       .attr('r', d => radius(d))
       .attr('fill', d => d.color || '#888');
+    // Hit circle radius matches the OUTER edge of the visible disk including
+    // the widest possible stroke (selected = 2.6 → half = 1.3 world units).
+    // Same size as the visible bubble; never bigger. No "everywhere triggers
+    // hover" overlap problem.
+    gNodes.selectAll('g.node circle.hit')
+      .attr('r', d => radius(d) + 1.3);
 
     layoutDone = true;
     updateLabels();
@@ -683,13 +695,16 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
   }
 
   function clearSelection() {
-    if (!selected.size && !traced.size) { fitView(); return; }
+    // Don't change zoom on clear: users routinely pan/zoom to read a region,
+    // then click empty canvas to drop the highlight. Snapping back to fit-all
+    // loses their place. The current viewport is preserved; only the lit set
+    // and the side panel are cleared.
+    if (!selected.size && !traced.size) return;
     selected.clear();
     recomputeTrace();
     applyTrace();
     updatePill();
     closePanel();
-    fitView();
   }
 
   function updatePill() {
