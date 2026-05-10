@@ -846,8 +846,11 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       .map(e => {
         const q = encodeURIComponent(`${e.artist} ${e.title}`);
         const yt = `https://www.youtube.com/results?search_query=${q}`;
+        const playBtn = e.preview_url
+          ? `<button class="playbtn" data-url="${escapeHtml(e.preview_url)}" title="Play 30s preview (${escapeHtml(e.preview_provider || '')})">▶</button>`
+          : `<button class="playbtn" disabled title="No preview available — use the ↗ link" style="opacity:.35;cursor:default">·</button>`;
         return `<li>
-          <button class="playbtn" data-artist="${escapeHtml(e.artist)}" data-title="${escapeHtml(e.title)}" title="Play 30s preview">▶</button>
+          ${playBtn}
           <span><b>${escapeHtml(e.artist)}</b> — <i>${escapeHtml(e.title)}</i>${e.year ? ` <span style="color:var(--muted)">(${e.year})</span>` : ''}</span>
           <a class="ext" href="${yt}" target="_blank" rel="noopener" title="Search on YouTube">↗</a>
         </li>`;
@@ -876,24 +879,8 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
   });
 
   const audioEl = new Audio();
+  audioEl.preload = 'none';
   let currentBtn = null;
-  const previewCache = new Map();
-
-  async function fetchPreview(artist, title) {
-    const key = artist + '|' + title;
-    if (previewCache.has(key)) return previewCache.get(key);
-    const term = encodeURIComponent(`${artist} ${title}`);
-    try {
-      const res = await fetch(`https://itunes.apple.com/search?term=${term}&entity=song&limit=1`);
-      const data = await res.json();
-      const url = data.results && data.results[0] && data.results[0].previewUrl;
-      previewCache.set(key, url || null);
-      return url || null;
-    } catch (e) {
-      previewCache.set(key, null);
-      return null;
-    }
-  }
 
   function stopPlayback() {
     audioEl.pause();
@@ -901,24 +888,21 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     if (currentBtn) { currentBtn.classList.remove('playing'); currentBtn.textContent = '▶'; currentBtn = null; }
   }
   audioEl.addEventListener('ended', stopPlayback);
+  audioEl.addEventListener('error', () => {
+    if (currentBtn) { currentBtn.textContent = '✕'; currentBtn.title = 'Preview failed to load'; }
+    setTimeout(stopPlayback, 1200);
+  });
 
-  panel.addEventListener('click', async e => {
+  panel.addEventListener('click', e => {
     const btn = e.target.closest('.playbtn');
-    if (!btn) return;
+    if (!btn || btn.disabled) return;
     e.stopPropagation();
     if (currentBtn === btn) { stopPlayback(); return; }
     stopPlayback();
+    const url = btn.dataset.url;
+    if (!url) return;
     currentBtn = btn;
     btn.classList.add('playing');
-    btn.textContent = '…';
-    const url = await fetchPreview(btn.dataset.artist, btn.dataset.title);
-    if (currentBtn !== btn) return;
-    if (!url) {
-      btn.textContent = '✕';
-      btn.title = 'No preview found — use the ↗ link to open YouTube';
-      setTimeout(() => { if (currentBtn === btn) stopPlayback(); }, 1200);
-      return;
-    }
     btn.textContent = '■';
     audioEl.src = url;
     audioEl.play().catch(() => stopPlayback());

@@ -7,6 +7,8 @@ class ExampleTrack(BaseModel):
     artist: str
     title: str
     year: int | None = None
+    preview_url: str | None = None
+    preview_provider: str | None = None
 
 
 class GeminiGenreResponse(BaseModel):
