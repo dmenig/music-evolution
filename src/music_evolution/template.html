@@ -182,7 +182,11 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     let cum = 0;
     for (let y = lo; y <= hi; y += BIN) {
       const c = counts.get(y) || 0;
-      const w = c > 0 ? (1 + Math.pow(c, 0.7)) : 0.01;
+      // Recent-era boost: dense post-2000 bins get more canvas width so
+      // bubbles can spread without forceCollide pushing centers off-year.
+      // Must match layout.py's _build_cdf so x_norm and axis ticks align.
+      const boost = y >= 2000 ? 4.0 : (y >= 1950 ? 2.5 : 1.0);
+      const w = c > 0 ? (1 + Math.pow(c, 0.7)) * boost : 0.01;
       points.push({ year: y, cumStart: cum });
       cum += w;
       points.push({ year: y + BIN, cumEnd: cum });
@@ -202,6 +206,36 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       }
     }
     return 0;
+  }
+
+  // Inverse CDF: canvas-fraction u in [0,1] → year. Used for dynamic
+  // axis ticks at evenly-spaced canvas positions.
+  function cdfInv(u) {
+    const { points, total, lo, hi } = cdfPoints;
+    if (u <= 0) return lo;
+    if (u >= 1) return hi;
+    const target = u * total;
+    for (let i = 0; i < points.length; i += 2) {
+      const a = points[i], b = points[i + 1];
+      if (target >= a.cumStart && target <= b.cumEnd) {
+        const span = b.cumEnd - a.cumStart;
+        if (span <= 0) return a.year;
+        const t = (target - a.cumStart) / span;
+        return a.year + t * (b.year - a.year);
+      }
+    }
+    return hi;
+  }
+
+  // Round a year to a "nice" value whose magnitude scales with the local
+  // CDF density: ancient millennia round to 1000y; modern decades to 5y.
+  function niceYear(year) {
+    if (year < -5000) return Math.round(year / 5000) * 5000;
+    if (year < 0) return Math.round(year / 1000) * 1000;
+    if (year < 1500) return Math.round(year / 100) * 100;
+    if (year < 1900) return Math.round(year / 50) * 50;
+    if (year < 1990) return Math.round(year / 10) * 10;
+    return Math.round(year / 5) * 5;
   }
 
   function xScale(year) {
@@ -316,10 +350,24 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
   window.addEventListener('scroll', refreshSvgRect, { passive: true });
 
   function drawAxis() {
-    const ticks = [yearMin, -10000, -1000, 0, 500, 1000, 1500, 1700, 1800, 1850,
-                   1900, 1925, 1950, 1970, 1990, 2010, 2026]
-      .filter((v, i, a) => v >= yearMin && v <= yearMax && a.indexOf(v) === i)
-      .sort((a, b) => a - b);
+    // Generate ticks at evenly-spaced canvas positions via inverse-CDF.
+    // Adapts to the current zoom: more ticks visible as you zoom in.
+    const w = W - margin.left - margin.right;
+    const N = Math.max(8, Math.min(20, Math.round(w * currentTransform.k / 130)));
+    const seen = new Set();
+    const ticks = [];
+    for (let i = 0; i <= N; i++) {
+      const screenU = i / N;
+      // Map screen position → world u (account for zoom transform).
+      const worldX = (screenU * w) / currentTransform.k - currentTransform.x / currentTransform.k + margin.left;
+      const u = (worldX - margin.left) / w;
+      if (u < 0 || u > 1) continue;
+      const y = niceYear(cdfInv(u));
+      if (y < yearMin || y > yearMax || seen.has(y)) continue;
+      seen.add(y);
+      ticks.push(y);
+    }
+    ticks.sort((a, b) => a - b);
     const yBar = H - 26;
     gAxisFixed.select('rect.axis-bg')
       .attr('x', 0).attr('y', yBar - 4).attr('width', W).attr('height', 30)

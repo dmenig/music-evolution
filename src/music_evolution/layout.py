@@ -19,6 +19,9 @@ RADIUS_PER_SCORE = 30.0
 INFLUENCE_WEIGHT = 0.85
 SIZE_MULTIPLIER = 1.4
 BIN_YEARS = 5
+# Must match template.html's yearMin/yearMax so x_norm aligns with the JS axis.
+YEAR_MIN_PAD = 20
+YEAR_MAX = 2026
 
 
 def _radius(node: dict) -> float:
@@ -34,18 +37,22 @@ def _build_cdf(nodes: list[dict]) -> tuple[list[tuple[int, float, float]], float
     Returns list of (year, cum_start, cum_end) bins and total cumulative."""
     counts: dict[int, int] = defaultdict(int)
     for n in nodes:
-        b = (n["peak_year"] // BIN_YEARS) * BIN_YEARS
+        b = (n["birth_year"] // BIN_YEARS) * BIN_YEARS
         counts[b] += 1
     if not nodes:
         return [], 1.0
-    lo = (min(n["peak_year"] for n in nodes) // BIN_YEARS) * BIN_YEARS
-    hi = (max(n["peak_year"] for n in nodes) // BIN_YEARS + 1) * BIN_YEARS
+    year_min = min(min(n["birth_year"] for n in nodes) - YEAR_MIN_PAD, 1500)
+    lo = math.floor(year_min / BIN_YEARS) * BIN_YEARS
+    hi = math.ceil(YEAR_MAX / BIN_YEARS) * BIN_YEARS
     bins: list[tuple[int, float, float]] = []
     cum = 0.0
     y = lo
     while y <= hi:
         c = counts.get(y, 0)
-        weight = (1.0 + c**0.7) if c > 0 else 0.01
+        # Recent-era boost: dense post-2000 bins get more canvas width so
+        # bubbles can spread without forceCollide pushing centers off-year.
+        boost = 4.0 if y >= 2000 else (2.5 if y >= 1950 else 1.0)
+        weight = (1.0 + c**0.7) * boost if c > 0 else 0.01
         bins.append((y, cum, cum + weight))
         cum += weight
         y += BIN_YEARS
@@ -71,7 +78,7 @@ def _x_jitter(nodes: list[dict]) -> dict[str, float]:
     """Spread same-year ties; ±20y pre-1900, ±5 to 1950, ±0.5 modern."""
     groups: dict[int, list[dict]] = defaultdict(list)
     for n in nodes:
-        groups[n["peak_year"]].append(n)
+        groups[n["birth_year"]].append(n)
     jit: dict[str, float] = {}
     for year, group in groups.items():
         group.sort(key=lambda x: x["id"])
@@ -84,17 +91,17 @@ def _x_jitter(nodes: list[dict]) -> dict[str, float]:
 
 
 def _x_world(node: dict, jit: dict[str, float], bins, total: float) -> float:
-    year = node["peak_year"] + jit.get(node["id"], 0.0)
+    year = node["birth_year"] + jit.get(node["id"], 0.0)
     return CANVAS_W * _cdf_at(year, bins, total)
 
 
 def _initial_y_targets(nodes: list[dict]) -> dict[str, float]:
     """Distribute ranks evenly within each X column so we don't start clumped."""
     by_id = {n["id"]: n for n in nodes}
-    ranked = sorted(nodes, key=lambda n: (n["peak_year"], n.get("y", 0.5)))
+    ranked = sorted(nodes, key=lambda n: (n["birth_year"], n.get("y", 0.5)))
     cols: dict[int, list[str]] = defaultdict(list)
     for n in ranked:
-        col = n["peak_year"] // 10
+        col = n["birth_year"] // 10
         cols[col].append(n["id"])
     target: dict[str, float] = {}
     for col, ids in cols.items():
@@ -107,7 +114,9 @@ def _initial_y_targets(nodes: list[dict]) -> dict[str, float]:
     return target
 
 
-def _relax_y(nodes: list[dict], xs: dict[str, float], y_target: dict[str, float]) -> dict[str, float]:
+def _relax_y(
+    nodes: list[dict], xs: dict[str, float], y_target: dict[str, float]
+) -> dict[str, float]:
     """Bucket by X column, push pairs apart by collision radius."""
     y: dict[str, float] = dict(y_target)
     # Bubbles render at constant screen size; layout uses the true screen
