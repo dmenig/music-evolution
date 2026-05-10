@@ -50,7 +50,6 @@
   .nodes.traced { will-change: opacity; }
   .nodes.traced g.node { opacity: 0.08; }
   .nodes.traced g.node.lit { opacity: 1; }
-  .nodes.traced g.node:not(.lit) { pointer-events: none; }
   .node.tiny circle { display: none; }
   .node.lit circle { stroke: rgba(255,255,255,0.92); stroke-width: 1.4; }
   .node.intersected circle { stroke: var(--accent-2); stroke-width: 2.2; }
@@ -300,17 +299,21 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     zoomIdleTimer = setTimeout(() => { zoomIdleTimer = null; settleZoom(); }, 90);
   }).on('end', () => {
     if (zoomIdleTimer) { clearTimeout(zoomIdleTimer); zoomIdleTimer = null; }
+    refreshSvgRect();
     settleZoom();
   });
   svg.call(zoom);
 
+  let svgRect = { left: 0, top: 0, width: 0, height: 0 };
+  function refreshSvgRect() { svgRect = svg.node().getBoundingClientRect(); }
   function resize() {
-    const rect = svg.node().getBoundingClientRect();
-    W = rect.width; H = rect.height;
+    refreshSvgRect();
+    W = svgRect.width; H = svgRect.height;
     drawAxis();
     layout();
   }
   window.addEventListener('resize', resize);
+  window.addEventListener('scroll', refreshSvgRect, { passive: true });
 
   function drawAxis() {
     const ticks = [yearMin, -10000, -1000, 0, 500, 1000, 1500, 1700, 1800, 1850,
@@ -339,6 +342,10 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
   }
 
   let layoutDone = false;
+  let ticksDone = 0;
+  let nodesByR = [];
+  const SIM_TICKS_TOTAL = 120;
+  const SIM_TICKS_FIRST = 30;
   function layout() {
     const sel = gNodes.selectAll('g.node').data(nodes, d => d.id);
     const enter = sel.enter().append('g').attr('class', 'node')
@@ -348,7 +355,13 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       .on('click', (e, d) => { e.stopPropagation(); onClick(d, e); });
     enter.append('circle');
 
-    relaxY();
+    relaxYInit();
+    relaxYTick(SIM_TICKS_FIRST);
+    ticksDone = SIM_TICKS_FIRST;
+    // Radius-descending index. Both updateLabels and applyTinyCulling have a
+    // monotonic gate on `r·k`, so iterating largest-first lets us break early
+    // (~50 nodes touched at fit zoom instead of all 4000).
+    nodesByR = nodes.slice().sort((a, b) => radius(b) - radius(a));
     nodeElById.clear();
     gNodes.selectAll('g.node')
       .attr('transform', d => `translate(${d._tx},${d._y})`)
@@ -358,11 +371,30 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       .attr('r', d => radius(d))
       .attr('fill', d => d.color || '#888');
 
-    drawEdges();
     layoutDone = true;
     updateLabels();
     applyTinyCulling();
     fitView();
+    // Yield, then finish the simulation in rAF chunks. Page is interactive
+    // immediately; bubbles visibly settle into place over the next ~3 frames.
+    requestAnimationFrame(continueLayout);
+  }
+
+  function refreshTransforms() {
+    gNodes.selectAll('g.node').attr('transform', d => `translate(${d._tx},${d._y})`);
+  }
+  function continueLayout() {
+    const remaining = SIM_TICKS_TOTAL - ticksDone;
+    if (remaining <= 0) {
+      _sim = null;
+      updateLabels();
+      return;
+    }
+    const n = Math.min(30, remaining);
+    relaxYTick(n);
+    ticksDone += n;
+    refreshTransforms();
+    requestAnimationFrame(continueLayout);
   }
 
   function fitView(idsBox) {
@@ -406,7 +438,8 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
   // from overlapping. Earlier column-pack bucketed nodes into N regular
   // columns and snapped X to column-center, which made the layout look
   // gridded and divorced from the actual time axis.
-  function relaxY() {
+  let _sim = null;
+  function relaxYInit() {
     const N = nodes.length;
     const availW = W - margin.left - margin.right;
     const availH = H - margin.top - margin.bottom - 30;
@@ -421,37 +454,32 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       if (ws[i] > maxW) maxW = ws[i];
     }
 
-    // Pick radius factor so total bubble area ≈ 30% of viewport area; this
-    // leaves enough whitespace for collision relaxation to converge cleanly.
     const FILL = 0.30;
     let factor = Math.sqrt((availW * availH * FILL) / (Math.PI * Math.max(1e-9, sumSqW)));
-    // Cap so a single mega-bubble can't take more than 1/3 of the canvas height.
     factor = Math.min(factor, availH / (3 * Math.max(1e-9, maxW)));
 
     for (let i = 0; i < N; i++) {
       const d = nodes[i];
       d._r = factor * ws[i];
       d.x = margin.left + availW * (d.x_norm || 0);
-      // Stagger initial Y by lineage so the simulation has somewhere to relax to.
       d.y = centerY + (((d.y_norm || 0.5) - 0.5) * availH * 0.6);
     }
 
     const targetX = (d) => margin.left + availW * (d.x_norm || 0);
-    const sim = d3.forceSimulation(nodes)
+    _sim = d3.forceSimulation(nodes)
       .alpha(1)
-      .alphaDecay(0.04)
+      .alphaDecay(0.06)
       .velocityDecay(0.4)
       .force('x', d3.forceX(targetX).strength(1))
       .force('y', d3.forceY(centerY).strength(0.05))
       .force('collide', d3.forceCollide(d => d._r + PACK_PAD).strength(1).iterations(2))
       .stop();
+  }
 
-    for (let i = 0; i < 240; i++) sim.tick();
-
-    for (const d of nodes) {
-      d._tx = d.x;
-      d._y = d.y;
-    }
+  function relaxYTick(n) {
+    if (!_sim) return;
+    for (let i = 0; i < n; i++) _sim.tick();
+    for (const d of nodes) { d._tx = d.x; d._y = d.y; }
   }
 
   function edgePath(d) {
@@ -461,38 +489,45 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     return `M${x1},${y1}C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
   }
 
-  const edgesByNode = new Map();
-  function drawEdges() {
-    const data = [];
-    for (const n of nodes) {
-      for (const p of n.parents) {
-        const par = byId.get(p);
+  // Edges are built on demand in applyTrace — only the lit subset (10–50 paths
+  // per trace) ever gets DOM, instead of all 14k at startup.
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  function buildLitEdges() {
+    const out = [];
+    if (!traced.size) return out;
+    const seen = new Set();
+    const edgesParent = gEdges.node();
+    for (const id of traced) {
+      const n = byId.get(id);
+      if (!n) continue;
+      for (const pid of (n.parents || [])) {
+        if (!traced.has(pid)) continue;
+        const key = pid + '>' + id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const par = byId.get(pid);
         if (!par) continue;
-        data.push({ s: par, t: n });
+        const path = document.createElementNS(SVG_NS, 'path');
+        path.setAttribute('class', 'edge lit');
+        path.setAttribute('d', edgePath({ s: par, t: n }));
+        path.setAttribute('stroke', n.color || '#666');
+        const popMin = Math.min(par.popularity || 0, n.popularity || 0);
+        const sw = Math.max(0.25, Math.min(1.0, Math.sqrt(Math.max(0.001, popMin)) * 0.28));
+        path.setAttribute('stroke-width', sw);
+        edgesParent.appendChild(path);
+        out.push(path);
       }
     }
-    const sel = gEdges.selectAll('path.edge').data(data, d => d.s.id + '>' + d.t.id);
-    const merged = sel.enter().append('path').attr('class', 'edge').merge(sel)
-      .attr('d', edgePath)
-      .attr('stroke', d => d.t.color || '#666')
-      .attr('stroke-width', d => {
-        const p = Math.min(d.s.popularity || 0, d.t.popularity || 0);
-        return Math.max(0.25, Math.min(1.0, Math.sqrt(Math.max(0.001, p)) * 0.28));
-      });
-    edgesByNode.clear();
-    merged.each(function (d) {
-      let arr = edgesByNode.get(d.s.id);
-      if (!arr) { arr = []; edgesByNode.set(d.s.id, arr); }
-      arr.push({ el: this, e: d });
-      arr = edgesByNode.get(d.t.id);
-      if (!arr) { arr = []; edgesByNode.set(d.t.id, arr); }
-      arr.push({ el: this, e: d });
-    });
+    return out;
   }
 
-  // Precompute descendant closures once (used for the multi-select intersection).
+  // Descendant closures are O(N·E) and only used for the multi-select
+  // intersection ring. Defer to first shift-click.
   const descendantsOf = new Map();
-  (function buildClosures() {
+  let closuresBuilt = false;
+  function buildClosures() {
+    if (closuresBuilt) return;
+    closuresBuilt = true;
     for (const n of nodes) descendantsOf.set(n.id, new Set());
     for (const n of nodes) {
       const dSet = descendantsOf.get(n.id);
@@ -508,7 +543,7 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
         frontier = next;
       }
     }
-  })();
+  }
 
   // Lineage trace is always one hop: the node plus its direct parents and direct
   // children. Earlier 1/2/∞ selectors made hub nodes ("Folk music") unusable.
@@ -537,6 +572,7 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       for (const x of closureOf(id)) traced.add(x);
     }
     if (selected.size >= 2) {
+      buildClosures();
       const arr = [...selected];
       let inter = new Set([arr[0], ...(descendantsOf.get(arr[0]) || [])]);
       for (let i = 1; i < arr.length; i++) {
@@ -550,7 +586,7 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
 
   function applyTrace() {
     for (const el of litNodeEls) el.classList.remove('lit', 'selected', 'intersected');
-    for (const el of litEdgeEls) el.classList.remove('lit');
+    for (const el of litEdgeEls) el.parentNode && el.parentNode.removeChild(el);
     litNodeEls = [];
     litEdgeEls = [];
     if (!traced.size) {
@@ -565,15 +601,8 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       if (selected.has(id)) el.classList.add('selected');
       else if (intersected.has(id)) el.classList.add('intersected');
       litNodeEls.push(el);
-      const eis = edgesByNode.get(id);
-      if (!eis) continue;
-      for (const ei of eis) {
-        if (traced.has(ei.e.s.id) && traced.has(ei.e.t.id) && !ei.el.classList.contains('lit')) {
-          ei.el.classList.add('lit');
-          litEdgeEls.push(ei.el);
-        }
-      }
     }
+    litEdgeEls = buildLitEdges();
     gNodes.classed('traced', true);
     updateLabels();
   }
@@ -631,13 +660,11 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
       ${desc ? `<div class="desc">${escapeHtml(desc)}</div>` : ''}`;
     tooltipEl.classList.add('show');
     moveTooltip(e);
-    updateLabels();
   }
   function moveTooltip(e) {
     if (!tooltipEl.classList.contains('show')) return;
-    const r = svg.node().getBoundingClientRect();
-    const x = e.clientX - r.left + 14;
-    const y = e.clientY - r.top + 14;
+    const x = e.clientX - svgRect.left + 14;
+    const y = e.clientY - svgRect.top + 14;
     const tw = tooltipEl.offsetWidth, th = tooltipEl.offsetHeight;
     tooltipEl.style.left = Math.min(W - tw - 8, x) + 'px';
     tooltipEl.style.top = Math.min(H - th - 8, y) + 'px';
@@ -649,7 +676,6 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     }
     hoveredId = null;
     tooltipEl.classList.remove('show');
-    updateLabels();
   }
   function onClick(d, e) { commitSelect(d.id, e.shiftKey); }
 
@@ -669,13 +695,23 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
     const padW = 2 / k;
     const forced = traced.size ? traced : null;
 
+    // Iterate radius-descending; stop once `r·k` falls below the label gate
+    // (forced/hover labels are added separately so the early break is safe).
     const eligible = [];
-    for (const d of nodes) {
-      const isForced = forced && forced.has(d.id);
-      const isHover = hoveredId === d.id;
-      const screenR = radius(d) * k;
-      if (!isForced && !isHover && screenR < LABEL_SCREEN_THRESHOLD) continue;
+    const rGate = LABEL_SCREEN_THRESHOLD / k;
+    const arr = nodesByR;
+    for (let i = 0; i < arr.length; i++) {
+      const d = arr[i];
+      if (radius(d) < rGate) break;
       eligible.push(d);
+    }
+    if (forced) for (const id of forced) {
+      const d = byId.get(id);
+      if (d && radius(d) < rGate) eligible.push(d);
+    }
+    if (hoveredId) {
+      const d = byId.get(hoveredId);
+      if (d && radius(d) < rGate && (!forced || !forced.has(hoveredId))) eligible.push(d);
     }
     eligible.sort((a, b) => {
       const aSel = selected.has(a.id), bSel = selected.has(b.id);
@@ -719,28 +755,33 @@ const PAYLOAD = /*__GENRES_DATA__*/null;
   }
 
   // Sub-pixel circle culling: at fit zoom most circles render <1 screen px and
-  // the browser still paints them. Toggle `.tiny` (CSS hides circle) on the
-  // diff vs the last set, so each settle only touches nodes whose state flipped.
-  let lastTinySet = new Set();
+  // the browser still paints them. With nodesByR sorted by radius descending,
+  // the tiny set is always the suffix [boundary..end]; binary-search the
+  // boundary and only flip classes on the diff range vs the previous boundary.
+  let lastTinyBoundary = -1;
   function applyTinyCulling() {
-    if (!layoutDone) return;
+    if (!layoutDone || !nodesByR.length) return;
     const k = currentTransform.k || 1;
     const minWorld = 0.4 / k;
-    const next = new Set();
-    for (const d of nodes) if (radius(d) < minWorld) next.add(d.id);
-    for (const id of lastTinySet) {
-      if (!next.has(id)) {
-        const el = nodeElById.get(id);
+    let lo = 0, hi = nodesByR.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (radius(nodesByR[mid]) >= minWorld) lo = mid + 1; else hi = mid;
+    }
+    const next = lo;
+    if (lastTinyBoundary < 0) lastTinyBoundary = nodesByR.length;
+    if (next < lastTinyBoundary) {
+      for (let i = next; i < lastTinyBoundary; i++) {
+        const el = nodeElById.get(nodesByR[i].id);
+        if (el) el.classList.add('tiny');
+      }
+    } else if (next > lastTinyBoundary) {
+      for (let i = lastTinyBoundary; i < next; i++) {
+        const el = nodeElById.get(nodesByR[i].id);
         if (el) el.classList.remove('tiny');
       }
     }
-    for (const id of next) {
-      if (!lastTinySet.has(id)) {
-        const el = nodeElById.get(id);
-        if (el) el.classList.add('tiny');
-      }
-    }
-    lastTinySet = next;
+    lastTinyBoundary = next;
   }
 
 
