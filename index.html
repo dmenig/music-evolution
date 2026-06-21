@@ -757,6 +757,7 @@ const PAYLOAD = JSON.parse("{\"version\":2,\"generated_at\":1778408299,\"nodes\"
   }
 
   function onHover(d, e) {
+    if (isMobile()) return;
     hoveredId = d.id;
     const el = nodeElById.get(d.id);
     if (el) el.classList.add('hovered');
