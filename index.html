@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <title>Music Evolution Graph</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <style>
   :root {
     --bg: #0e0f13;
@@ -17,6 +17,7 @@
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--fg);
+    overscroll-behavior: none; -webkit-text-size-adjust: 100%;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
   body, body * { color: var(--fg); }
   option { background: var(--panel); color: var(--fg); }
@@ -36,7 +37,7 @@
   header .pill.active { color: var(--accent); border-color: var(--accent); }
   header .hint { font-size: 11px; color: var(--muted); }
   main { position: relative; overflow: hidden; }
-  svg { width: 100%; height: 100%; cursor: grab; display: block; }
+  svg { width: 100%; height: 100%; cursor: grab; display: block; touch-action: none; }
   svg:active { cursor: grabbing; }
   .axis, .axis text, text.axis { fill: #c8cdda !important; font-size: 10px; }
   .axis line, .axis path, line.axis { stroke: #3a3f4d; }
@@ -85,61 +86,36 @@
   aside.panel .ext { font-size: 11px; color: var(--muted); text-decoration: none; margin-left: 4px; }
   aside.panel .ext:hover { color: var(--accent); }
   aside.panel .close { float: right; cursor: pointer; color: var(--muted); border: 0; background: transparent; font-size: 18px; }
-  aside.panel .sheet-handle { display: none; }
+  aside.panel .handle { display: none; }
   .legend { position: absolute; left: 12px; bottom: 38px; font-size: 11px; color: var(--muted);
     background: rgba(22,24,31,0.8); padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); }
+  .legend.hidden { display: none; }
 
-  @media (max-width: 700px) {
+  @media (max-width: 768px), (pointer: coarse) {
+    header { padding: 6px 8px; gap: 6px; }
+    header h1 { font-size: 13px; margin-right: 0; }
+    header .group.search { flex: 1 1 100%; order: 5; }
+    header input[type="search"] { width: 100%; }
+    header .hint { display: none; }
+    header button, header input[type="search"], header select { padding: 8px 12px; }
+    .legend { left: 8px; right: 8px; bottom: 30px; max-width: none; font-size: 10px; }
+
+    /* Detail panel becomes a retractable bottom sheet. */
     aside.panel {
-      top: auto; left: 0; right: 0; bottom: 0;
-      width: 100%;
-      height: var(--sheet-h, 60vh);
-      max-height: 95vh;
-      border-left: none;
-      border-top: 1px solid var(--border);
-      border-top-left-radius: 16px;
-      border-top-right-radius: 16px;
-      transform: translateY(100%);
-      transition: transform .22s ease, height .18s ease;
-      padding: 26px 16px 20px;
-      box-shadow: 0 -10px 28px rgba(0,0,0,0.5);
-      overscroll-behavior: contain;
+      top: auto; left: 0; right: 0; bottom: 0; width: 100%;
+      max-height: 72vh; border-left: none; border-top: 1px solid var(--border);
+      border-radius: 16px 16px 0 0; padding: 4px 16px 16px;
+      padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+      transform: translateY(100%); box-shadow: 0 -8px 28px rgba(0,0,0,0.55);
+      transition: transform .22s ease;
     }
     aside.panel.open { transform: translateY(0); }
-    aside.panel.dragging { transition: none; }
-    aside.panel .sheet-handle {
-      display: block;
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 24px;
-      cursor: grab;
-      touch-action: none;
-      z-index: 2;
-    }
-    aside.panel .sheet-handle::before {
-      content: "";
-      display: block;
-      width: 44px; height: 4px;
-      background: #4a5163;
-      border-radius: 2px;
-      margin: 8px auto 0;
-    }
-    aside.panel .sheet-handle:active { cursor: grabbing; }
-    aside.panel h2 { font-size: 20px; margin-top: 0; }
-    aside.panel .meta { font-size: 13px; }
-    aside.panel #pDesc { font-size: 14px; line-height: 1.55; }
-    aside.panel ul { font-size: 14px; }
-    aside.panel .chip { font-size: 12px; padding: 5px 10px; }
-    aside.panel .close {
-      float: none; position: absolute; top: 4px; right: 10px;
-      font-size: 26px; line-height: 1; padding: 6px 10px; z-index: 3;
-    }
+    aside.panel .handle { display: block; width: 40px; height: 4px; margin: 8px auto 4px;
+      border-radius: 999px; background: var(--muted); opacity: 0.55; cursor: grab; }
+    aside.panel .close { font-size: 26px; line-height: 1; padding: 0 4px; margin-top: -4px; }
+    aside.panel .chip { padding: 6px 11px; font-size: 12px; }
     aside.panel .playbtn { width: 32px; height: 32px; font-size: 13px; }
-    header { padding: 6px 10px; gap: 8px; }
-    header h1 { font-size: 13px; }
-    header input[type="search"] { width: 180px; }
-    header .hint { display: none; }
-    .legend { display: none; }
+    aside.panel ul li { margin-bottom: 8px; }
   }
 </style>
 </head>
@@ -147,7 +123,7 @@
 <div id="app">
   <header>
     <h1>♪ Music Evolution</h1>
-    <div class="group">
+    <div class="group search">
       <input id="search" type="search" placeholder="Search genre, alias, artist… (Enter)" autocomplete="off" />
     </div>
     <div class="group">
@@ -155,6 +131,7 @@
     </div>
     <div class="group">
       <button id="btnClear">Clear (Esc)</button>
+      <button id="btnLegend" title="Show the size/color legend">ⓘ</button>
     </div>
     <div class="group">
       <span class="hint">Click = trace · Shift+click = add · Esc / empty = clear</span>
@@ -163,13 +140,14 @@
   <main>
     <svg id="canvas"></svg>
     <div id="tooltip" class="tooltip"></div>
-    <div class="legend">
+    <div class="legend hidden">
       <div><b>Bubble size</b> ∝ (popularity² × √fanout / era-mass)^0.4</div>
       <div><b>Color</b> inherits from parents (fusions blend)</div>
       <div><b>Desaturated + dashed</b> = no longer a living tradition</div>
       <div><b>Blue ring</b> in multi-select = descendant of every selection</div>
     </div>
     <aside class="panel" id="panel">
+      <div class="handle" id="panelHandle" aria-label="drag to close"></div>
       <button class="close" id="panelClose" aria-label="close">×</button>
       <h2 id="pName">—</h2>
       <div class="meta" id="pMeta">—</div>
@@ -541,14 +519,13 @@ const PAYLOAD = JSON.parse("{\"version\":2,\"generated_at\":1778408299,\"nodes\"
       if (ys[i] + rs[i] > yMax) yMax = ys[i] + rs[i];
     }
     xMin -= pad; xMax += pad; yMin -= pad; yMax += pad;
-    // The side panel covers the right edge of the SVG when open, so reserve
-    // that strip and center the trace inside the visible viewport instead of
-    // the full canvas — otherwise far-right genres sit under the panel.
+    // The detail panel covers part of the SVG when open, so reserve its strip
+    // and center the trace in the visible viewport — on desktop it's a right
+    // rail (reserve width); on mobile it's a bottom sheet (reserve height).
     const panelOpen = panel.classList.contains('open');
-    const isSheet = window.matchMedia('(max-width: 700px)').matches;
-    const panelRect = panelOpen ? panel.getBoundingClientRect() : null;
-    const panelW = panelOpen && !isSheet ? panelRect.width : 0;
-    const panelH = panelOpen && isSheet ? panelRect.height : 0;
+    const pRect = panelOpen ? panel.getBoundingClientRect() : null;
+    const panelW = (panelOpen && !isMobile()) ? pRect.width : 0;
+    const panelH = (panelOpen && isMobile()) ? pRect.height : 0;
     const visibleW = W - panelW;
     const availH = H - 40 - panelH;
     const k = Math.min(50, Math.min(visibleW / Math.max(1, xMax - xMin), availH / Math.max(1, yMax - yMin)));
@@ -950,61 +927,6 @@ const PAYLOAD = JSON.parse("{\"version\":2,\"generated_at\":1778408299,\"nodes\"
     panel.classList.remove('open');
     stopPlayback();
   }
-
-  (function setupBottomSheet() {
-    const mq = window.matchMedia('(max-width: 700px)');
-    const handle = document.createElement('div');
-    handle.className = 'sheet-handle';
-    handle.setAttribute('aria-label', 'drag to resize');
-    panel.insertBefore(handle, panel.firstChild);
-    const snapPoints = () => {
-      const vh = window.innerHeight;
-      return [Math.round(vh * 0.22), Math.round(vh * 0.6), Math.round(vh * 0.92)];
-    };
-    function snap(h) {
-      const arr = snapPoints();
-      let best = arr[1], bestD = Infinity;
-      for (const s of arr) { const d = Math.abs(s - h); if (d < bestD) { bestD = d; best = s; } }
-      return best;
-    }
-    let dragging = false, startY = 0, startH = 0, pid = null;
-    function onDown(e) {
-      if (!mq.matches) return;
-      dragging = true;
-      pid = e.pointerId;
-      handle.setPointerCapture(pid);
-      panel.classList.add('dragging');
-      startY = e.clientY;
-      startH = panel.getBoundingClientRect().height;
-      e.preventDefault();
-    }
-    function onMove(e) {
-      if (!dragging || e.pointerId !== pid) return;
-      const dy = startY - e.clientY;
-      const h = Math.max(60, Math.min(window.innerHeight * 0.95, startH + dy));
-      panel.style.setProperty('--sheet-h', h + 'px');
-      panel.style.height = h + 'px';
-    }
-    function onUp(e) {
-      if (!dragging || e.pointerId !== pid) return;
-      dragging = false;
-      panel.classList.remove('dragging');
-      try { handle.releasePointerCapture(pid); } catch (_) {}
-      pid = null;
-      const h = panel.getBoundingClientRect().height;
-      const target = snap(h);
-      panel.style.setProperty('--sheet-h', target + 'px');
-      panel.style.height = target + 'px';
-    }
-    handle.addEventListener('pointerdown', onDown);
-    handle.addEventListener('pointermove', onMove);
-    handle.addEventListener('pointerup', onUp);
-    handle.addEventListener('pointercancel', onUp);
-    mq.addEventListener('change', () => {
-      panel.style.height = '';
-      panel.style.removeProperty('--sheet-h');
-    });
-  })();
   function chip(id) {
     const n = byId.get(id); if (!n) return `<span class="chip" style="opacity:.5">${id}</span>`;
     return `<span class="chip" data-id="${n.id}">${escapeHtml(n.name)}</span>`;
@@ -1014,6 +936,42 @@ const PAYLOAD = JSON.parse("{\"version\":2,\"generated_at\":1778408299,\"nodes\"
     const id = e.target.dataset && e.target.dataset.id;
     if (id && byId.has(id)) commitSelect(id, e.shiftKey);
   });
+
+  function isMobile() { return window.matchMedia('(max-width: 768px), (pointer: coarse)').matches; }
+
+  // Legend (size/color formula) is off by default; toggle it on demand.
+  const legendEl = document.querySelector('.legend');
+  const btnLegend = document.getElementById('btnLegend');
+  btnLegend.onclick = () => {
+    const shown = !legendEl.classList.toggle('hidden');
+    btnLegend.classList.toggle('primary', shown);
+  };
+
+  // Bottom-sheet drag-to-retract: drag the handle (or sheet header) downward;
+  // release past a threshold to dismiss, otherwise it springs back open.
+  const panelHandle = document.getElementById('panelHandle');
+  let dragStartY = null, dragDelta = 0;
+  panelHandle.addEventListener('touchstart', e => {
+    if (!isMobile() || !panel.classList.contains('open')) return;
+    dragStartY = e.touches[0].clientY;
+    dragDelta = 0;
+    panel.style.transition = 'none';
+  }, { passive: true });
+  panelHandle.addEventListener('touchmove', e => {
+    if (dragStartY == null) return;
+    dragDelta = Math.max(0, e.touches[0].clientY - dragStartY);
+    panel.style.transform = `translateY(${dragDelta}px)`;
+  }, { passive: true });
+  function endDrag() {
+    if (dragStartY == null) return;
+    const dismiss = dragDelta > 90;
+    panel.style.transition = '';
+    panel.style.transform = '';
+    dragStartY = null;
+    if (dismiss) clearSelection();
+  }
+  panelHandle.addEventListener('touchend', endDrag);
+  panelHandle.addEventListener('touchcancel', endDrag);
 
   const audioEl = new Audio();
   audioEl.preload = 'none';
